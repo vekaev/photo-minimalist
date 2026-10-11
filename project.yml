@@ -1,0 +1,38 @@
+name: HorizonLeveler
+options:
+  bundleIdPrefix: app.horizonleveler
+  deploymentTarget:
+    macOS: "14.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+targets:
+  HorizonLeveler:
+    type: application
+    platform: macOS
+    sources:
+      - App
+      - Core
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.horizonleveler.HorizonLeveler
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Horizon Leveler
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.photography
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        ENABLE_APP_SANDBOX: NO
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+  leveler-cli:
+    type: tool
+    platform: macOS
+    sources:
+      - CLI
+      - Core
+    settings:
+      base:
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual

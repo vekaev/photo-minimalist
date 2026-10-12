@@ -21,15 +21,29 @@ final class RecentFolders {
     private init() {
         if let data = UserDefaults.standard.data(forKey: Self.key),
            let saved = try? JSONDecoder().decode([Item].self, from: data) {
-            items = saved
+            items = Self.deduplicated(saved)
+            if items.count != saved.count { save() }
         }
+    }
+
+    /// Where an entry points now. The stored path can be stale: folders inside the app's own Documents move when
+    /// the app is reinstalled or updated (new container), and the bookmark follows them.
+    private static func currentPath(_ item: Item) -> String {
+        var stale = false
+        return (try? URL(resolvingBookmarkData: item.bookmark, bookmarkDataIsStale: &stale))?.standardizedFileURL.path ?? item.path
+    }
+
+    /// One entry per folder (newest first), so a folder never shows up twice in Recent.
+    private static func deduplicated(_ list: [Item]) -> [Item] {
+        var seen = Set<String>()
+        return list.filter { seen.insert(currentPath($0)).inserted }
     }
 
     /// Call after a folder opened (its security scope is held by the Library at that point).
     func add(_ url: URL) {
         guard let bookmark = try? url.bookmarkData() else { return }
         let path = url.standardizedFileURL.path
-        items.removeAll { $0.path == path }
+        items.removeAll { $0.path == path || Self.currentPath($0) == path }
         items.insert(Item(path: path, name: url.lastPathComponent, bookmark: bookmark), at: 0)
         if items.count > Self.limit { items.removeLast(items.count - Self.limit) }
         save()
@@ -38,7 +52,7 @@ final class RecentFolders {
     /// Recent folders other than the one that's open.
     func others(than folder: URL?) -> [Item] {
         let open = folder?.standardizedFileURL.path
-        return items.filter { $0.path != open }
+        return items.filter { $0.path != open && Self.currentPath($0) != open }
     }
 
     /// Saves the open folder's state and switches to `item`. A folder that's gone is dropped from the list.

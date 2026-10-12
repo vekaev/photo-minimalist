@@ -19,6 +19,7 @@ struct CropVersionThumb: View {
     let rotation: Double
     let version: CropVersion
     let height: CGFloat
+    var fix: BandFixSource? = nil
     var number: Int?
     var chosen = false
     var current = false
@@ -27,7 +28,7 @@ struct CropVersionThumb: View {
         let aspect = Geometry.finalAspect(image.map { CGFloat($0.width) / CGFloat($0.height) } ?? 1.5, crop: version.rect)
         ZStack {
             Color.primary.opacity(0.06)
-            if let image { EditedImage(image: image, rotation: rotation, crop: version.rect) }
+            if let image { EditedImage(image: image, rotation: rotation, crop: version.rect, fix: fix) }
         }
         .frame(width: height * aspect, height: height)
         .clipShape(RoundedRectangle(cornerRadius: 4))
@@ -89,7 +90,7 @@ struct CropVersionStrip: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(Array(photo.cropVersions.enumerated()), id: \.element.id) { i, v in
-                        CropVersionThumb(image: image, rotation: photo.correction, version: v, height: height, number: i + 1,
+                        CropVersionThumb(image: image, rotation: photo.correction, version: v, height: height, fix: photo.bandFixSource, number: i + 1,
                                          chosen: photo.chosenVersion?.id == v.id, current: Library.sameRect(v.rect, draft))
                             .onTapGesture { onLoad(v) }
                             .contextMenu {
@@ -183,7 +184,7 @@ struct CropStudio: View {
         let v = photo.cropVersions[i]
         let chosen = photo.chosenVersion?.id == v.id
         return VStack(spacing: 6) {
-            CropVersionThumb(image: image, rotation: photo.correction, version: v, height: height, chosen: chosen)
+            CropVersionThumb(image: image, rotation: photo.correction, version: v, height: height, fix: photo.bandFixSource, chosen: chosen)
             HStack(spacing: 6) {
                 Text("\(i + 1)").monospacedDigit().foregroundStyle(.secondary)
                 Text(v.ratio.isEmpty ? "Free" : v.ratio)

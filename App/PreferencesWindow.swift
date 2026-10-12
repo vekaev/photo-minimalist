@@ -8,6 +8,7 @@ struct PreferencesView: View {
         TabView {
             GeneralPreferences().tabItem { Label("General", systemImage: "gearshape") }
             ReviewPreferences().tabItem { Label("Review", systemImage: "checkmark.circle") }
+            AdvancedPreferences().tabItem { Label("Advanced", systemImage: "gearshape.2") }
         }
         .frame(width: 460)
         .fixedSize(horizontal: false, vertical: true)
@@ -72,6 +73,23 @@ private struct ReviewPreferences: View {
                 Toggle("Level tilted photos automatically", isOn: $autoLevel)
             } footer: {
                 Text("Applies only to new folders. Off is recommended: suggestions stay suggestions until you decide.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+/// Experimental, personal features. Everything they add stays hidden while they're off.
+private struct AdvancedPreferences: View {
+    @AppStorage(Library.labFixesKey) private var labFixes = false
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Film scan fixes", isOn: $labFixes)
+            } footer: {
+                Text("Experimental: removes dark shutter bands near the frame edges of film scans (Leica M6).")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

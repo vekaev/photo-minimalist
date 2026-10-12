@@ -55,6 +55,8 @@ targets:
       base:
         PRODUCT_NAME: Minimalist
         PRODUCT_BUNDLE_IDENTIFIER: app.horizonleveler.ios
+        # The image engine (band fix, line detector) is ~80× slower unoptimized; the simulator runs Debug builds.
+        SWIFT_OPTIMIZATION_LEVEL: "-O"
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Minimalist
         INFOPLIST_KEY_UILaunchScreen_Generation: YES

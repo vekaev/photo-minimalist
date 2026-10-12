@@ -6,8 +6,47 @@ struct EditedImage: View {
     let image: CGImage
     var rotation: Double = 0
     var crop: CGRect?
+    /// Film scan fix (shutter bands), applied to the upright image before rotation and crop, like export does.
+    var fix: BandFixSource?
+    /// Live slider previews: fix a copy at most this big, so each change stays quick.
+    var fixMaxPixel: Int?
+
+    /// The last fixed picture and what it was made for: kept while a new one is computed (no flash of the unfixed
+    /// photo while a slider moves or a sharper preview arrives), dropped when the photo changes.
+    @State private var fixed: CGImage?
+    @State private var fixedURL: URL?
+
+    private var shownImage: CGImage {
+        guard let fix else { return image }
+        if let hit = BandFixStore.shared.cachedFixed(source, fix) { return hit }
+        if let fixed, fixedURL == fix.url { return fixed }
+        return image
+    }
+
+    private var source: CGImage {
+        guard let fixMaxPixel else { return image }
+        return BandFixStore.shared.liveBase(image, maxPixel: fixMaxPixel)
+    }
+
+    private var fixKey: String? {
+        fix.map { "\($0.url.path)|\(image.width)x\(image.height)|\(fixMaxPixel ?? 0)|" + BandFixStore.settingsKey($0.settings) }
+    }
 
     var body: some View {
+        content(shownImage)
+            .task(id: fixKey) {
+                guard let fix else { fixed = nil; fixedURL = nil; return }
+                let base = source
+                if let hit = BandFixStore.shared.cachedFixed(base, fix) { fixed = hit; fixedURL = fix.url; return }
+                // Debounce: a slider sends many values; only the one it rests on (~50 ms) is computed.
+                try? await Task.sleep(for: .milliseconds(50))
+                guard !Task.isCancelled, let out = await BandFixStore.shared.fixed(base, fix), !Task.isCancelled else { return }
+                fixed = out
+                fixedURL = fix.url
+            }
+    }
+
+    private func content(_ image: CGImage) -> some View {
         GeometryReader { geo in
             let c = crop ?? CGRect(x: 0, y: 0, width: 1, height: 1)
             // The leveled frame this crop is cut from, at this scale.

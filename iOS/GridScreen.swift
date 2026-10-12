@@ -10,6 +10,8 @@ struct GridScreen: View {
     /// "Select" mode: tap toggles tiles; the bottom bar acts on them.
     @State private var selecting = false
     @State private var picked: Set<String> = []
+    /// Settings ▸ Advanced ▸ "Film scan fixes" (hidden feature).
+    @AppStorage(Library.labFixesKey) private var labFixes = false
 
     private func photos(_ t: Filter) -> [Photo] { library.photos(for: t) }
 
@@ -62,6 +64,18 @@ struct GridScreen: View {
                                     }
                                     Button(role: .destructive) { library.resetToOriginal([p.id]) } label: {
                                         Label("Reset Decision", systemImage: "arrow.counterclockwise")
+                                    }
+                                    if labFixes {
+                                        Menu {
+                                            Button { library.applyBandFix([p.id]) } label: {
+                                                Label("Remove Shutter Bands", systemImage: "wand.and.rays")
+                                            }
+                                            if p.bandFix != nil {
+                                                Button { library.removeBandFix([p.id]) } label: {
+                                                    Label("Remove Fix", systemImage: "xmark.circle")
+                                                }
+                                            }
+                                        } label: { Label("Fixes", systemImage: "wand.and.rays") }
                                     }
                                     Divider()
                                     Button(role: .destructive) { library.requestDelete([p.id]) } label: {
@@ -248,6 +262,20 @@ struct GridScreen: View {
             barButton("heart", "Favorite") { library.toggleFavorite(ids) }
             barButton("level", "Level") { library.decide(ids, .level) }
             barButton("trash", "Delete") { library.requestDelete(ids) }
+            if labFixes {
+                Menu {
+                    Button { library.applyBandFix(ids) } label: { Label("Fix bands", systemImage: "wand.and.rays") }
+                    Button { library.removeBandFix(ids) } label: { Label("Remove Fix", systemImage: "xmark.circle") }
+                        .disabled(!ids.contains { library.photo($0)?.bandFix != nil })
+                } label: {
+                    VStack(spacing: 2) {
+                        Image(systemName: "ellipsis.circle").font(.system(size: 17, weight: .medium))
+                        Text("More").font(.caption2)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 50)
+                }
+                .disabled(picked.isEmpty)
+            }
             Button { withAnimation(.easeOut(duration: 0.15)) { selecting = false; picked = [] } } label: {
                 Text("Done").font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 50)
             }
@@ -300,7 +328,7 @@ private struct Cell: View {
                     Color.clear
                         .aspectRatio(Geometry.finalAspect(CGFloat(image.width) / CGFloat(image.height), crop: photo.appliedCrop),
                                      contentMode: thumbFill ? .fill : .fit)
-                        .overlay { EditedImage(image: image, rotation: photo.appliedCorrection, crop: photo.appliedCrop) }
+                        .overlay { EditedImage(image: image, rotation: photo.appliedCorrection, crop: photo.appliedCrop, fix: photo.bandFixSource) }
                         .clipped()
                 }
             }
@@ -372,7 +400,7 @@ final class Exporter {
 
     func run(_ library: Library) {
         guard let folder = library.folder else { return }
-        let jobs = library.toExport.map { (id: $0.id, url: $0.url, degrees: $0.correction, crop: $0.crop) }
+        let jobs = library.toExport.map { (id: $0.id, url: $0.url, degrees: $0.appliedCorrection, crop: $0.appliedCrop, band: $0.bandFix) }
         let dest = folder.appendingPathComponent("leveled", isDirectory: true)
         running = true; done = 0; total = jobs.count; message = nil
         Task {
@@ -382,7 +410,8 @@ final class Exporter {
             for job in jobs {
                 let out = dest.appendingPathComponent(job.id).deletingPathExtension().appendingPathExtension("jpg")
                 let ok = await Task.detached(priority: .userInitiated) {
-                    (try? Renderer.export(source: job.url, degrees: job.degrees, crop: job.crop, to: out, format: .jpeg, quality: 0.95)) != nil
+                    (try? Renderer.export(source: job.url, degrees: job.degrees, crop: job.crop, bandFix: job.band,
+                                          to: out, format: .jpeg, quality: 0.95)) != nil
                 }.value
                 if !ok { failed += 1 } else { exported.append(job.id) }
                 done += 1
@@ -407,7 +436,7 @@ private struct Peek: View {
                 if let image {
                     Color.clear
                         .aspectRatio(Geometry.finalAspect(CGFloat(image.width) / CGFloat(image.height), crop: photo.appliedCrop), contentMode: .fill)
-                        .overlay { EditedImage(image: image, rotation: photo.appliedCorrection, crop: photo.appliedCrop) }
+                        .overlay { EditedImage(image: image, rotation: photo.appliedCorrection, crop: photo.appliedCrop, fix: photo.bandFixSource) }
                 }
             }
             .frame(width: 340, height: 227)

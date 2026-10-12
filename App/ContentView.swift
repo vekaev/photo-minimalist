@@ -323,12 +323,19 @@ private struct PageHeader: View {
 
 struct MoreMenu: View {
     @Environment(Library.self) private var library
+    @AppStorage(Library.labFixesKey) private var labFixes = false
 
     var body: some View {
         @Bindable var library = library
         Menu {
             Button("View Options  S") { withAnimation { library.showSettings.toggle() } }
             Button("Customize Controls…") { library.showControls = true }.disabled(library.folder == nil)
+            if labFixes, let id = library.openedID {
+                Button("Fixes…") {
+                    UserDefaults.standard.set(true, forKey: "showPreview")
+                    library.openFixes(id)
+                }
+            }
             SettingsLink { Text("Settings…  ⌘,") }
             Divider()
             Button("Open folder…") { library.chooseFolder() }
@@ -539,6 +546,7 @@ struct FavoriteMark: View {
 /// Right-click (two-finger click) menu for one or more photos.
 struct StatusMenu: View {
     @Environment(Library.self) private var library
+    @AppStorage(Library.labFixesKey) private var labFixes = false
     let ids: [String]
 
     var body: some View {
@@ -563,11 +571,29 @@ struct StatusMenu: View {
             Button("Restore Original" + suffix) { library.restoreOriginals(ids) }
         }
         Button("Reset Decision" + suffix) { library.resetToOriginal(ids) }
+        if labFixes {
+            Menu("Fixes") {
+                Button("Remove Shutter Bands (auto)" + suffix) { library.applyBandFix(ids) }
+                if photos.contains(where: { $0.bandFix != nil }) {
+                    Button("Remove Fix" + suffix) { library.removeBandFix(ids) }
+                }
+                if ids.count == 1 {
+                    Divider()
+                    Button("Open Fixes Panel") { openFixesPanel(ids[0]) }
+                }
+            }
+        }
         Divider()
         Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(photos.map(\.url)) }
         Button("Add to Photos" + suffix) { library.addToPhotos(ids) }
         Divider()
         Button("Move to Trash") { library.requestDelete(ids) }
+    }
+
+    /// Shows the photo in the preview (bringing the preview back if it's hidden) with the Fixes panel open.
+    private func openFixesPanel(_ id: String) {
+        UserDefaults.standard.set(true, forKey: "showPreview")
+        library.openFixes(id)
     }
 }
 
@@ -608,7 +634,7 @@ struct PhotoThumb: View {
                 let aspect = Geometry.finalAspect(CGFloat(image.width) / CGFloat(image.height), crop: photo.appliedCrop)
                 Color.clear
                     .aspectRatio(aspect, contentMode: fit ? .fit : .fill)
-                    .overlay { EditedImage(image: image, rotation: photo.appliedCorrection, crop: photo.appliedCrop) }
+                    .overlay { EditedImage(image: image, rotation: photo.appliedCorrection, crop: photo.appliedCrop, fix: photo.bandFixSource) }
                     .clipped()
                     .overlay {
                         if showSuggestion, library.hasSuggestion(photo), let d = photo.detection { HorizonLine(degrees: d.angle) }

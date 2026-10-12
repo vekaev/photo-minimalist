@@ -7,6 +7,8 @@ import Foundation
 /// control is in the bar.
 enum PhotoControl: String, CaseIterable, Identifiable {
     case level, crop, favorite, original, info, history, compare, copy, save, export, trash, photos, undo, viewOptions
+    /// Film scan fixes (shutter bands): only while Settings ▸ Advanced ▸ "Film scan fixes" is on; never a default.
+    case fixes
 
     enum Platform { case mac, phone }
 
@@ -29,6 +31,7 @@ enum PhotoControl: String, CaseIterable, Identifiable {
         case .photos: return "Add to Photos"
         case .undo: return "Undo"
         case .viewOptions: return "View Options"
+        case .fixes: return "Fixes…"
         }
     }
 
@@ -42,6 +45,7 @@ enum PhotoControl: String, CaseIterable, Identifiable {
         case .trash: return "Trash"
         case .photos: return "Photos"
         case .viewOptions: return "View"
+        case .fixes: return "Fixes"
         default: return title
         }
     }
@@ -62,6 +66,7 @@ enum PhotoControl: String, CaseIterable, Identifiable {
         case .photos: return "photo.badge.plus"
         case .undo: return "arrow.uturn.backward"
         case .viewOptions: return "slider.horizontal.3"
+        case .fixes: return "wand.and.rays"
         }
     }
 
@@ -79,13 +84,14 @@ enum PhotoControl: String, CaseIterable, Identifiable {
         case .trash: return "⌫"
         case .undo: return "⌘Z"
         case .viewOptions: return "S"
-        case .history, .compare, .photos: return nil
+        case .history, .compare, .photos, .fixes: return nil
         }
     }
 
     /// iPhone: Info is the "3 / 120 ⓘ" counter (always there), View options is the settings button (always
     /// there, it's where the bar is customized), compare isn't built, export works on the whole folder from the grid.
     func available(on platform: Platform) -> Bool {
+        if self == .fixes { return UserDefaults.standard.bool(forKey: "labFixes") }
         switch platform {
         case .mac: return true
         case .phone: return ![.info, .viewOptions, .compare, .export].contains(self)

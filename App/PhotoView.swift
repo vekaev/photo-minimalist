@@ -65,7 +65,12 @@ struct PhotoView: View {
     @FocusState private var focused: Bool
 
     /// The level tool is open (it stays open from photo to photo until Done / Esc).
-    private var levelMode: Bool { library.levelTool && !cropMode }
+    private var levelMode: Bool { library.levelTool && !cropMode && !fixesMode }
+
+    /// Settings ▸ Advanced ▸ "Film scan fixes": the Fixes mode and its menu items exist only while it's on.
+    @AppStorage(Library.labFixesKey) private var labFixes = false
+    /// The Fixes panel is open (stays open from photo to photo until Done / Esc). Not in quick look.
+    private var fixesMode: Bool { labFixes && library.fixesTool && !cropMode && !floating }
 
     /// Rotation currently on screen (counter-clockwise positive).
     private var shown: Double {
@@ -78,6 +83,9 @@ struct PhotoView: View {
     var body: some View {
         VStack(spacing: 0) {
             topRow
+            if fixesMode {
+                FixesWorkspace(photo: photo, image: image)
+            } else {
             Group {
                 if compare == .sideBySide && !showOriginal {
                     HStack(spacing: 10) {
@@ -98,6 +106,7 @@ struct PhotoView: View {
                     .padding(.horizontal, 20).padding(.top, 10)
                 cropBar
             } else if levelMode { bottom }
+            }
         }
         .background(Theme.ground)
         .focusable()
@@ -106,6 +115,7 @@ struct PhotoView: View {
         .onAppear { focused = true }
         .onChange(of: photo.id) { pick.clear(); preview = nil; peek = nil; chipHover = false; showOriginal = false; cropMode = false; lineShift = 0; showStudio = false; focused = true }
         .onChange(of: library.levelTool) { if !library.levelTool { pick.clear(); preview = nil; peek = nil } }
+        .onChange(of: library.fixesTool) { if library.fixesTool { pick.clear(); peek = nil; chipHover = false; showOriginal = false; if cropMode { cancelCrop() } } }
         .sheet(isPresented: $showStudio) {
             CropStudio(photo: photo, image: image, onChoose: { v in
                 library.chooseCropVersion(photo.id, v.id)
@@ -164,6 +174,10 @@ struct PhotoView: View {
         .contextMenu {
             Button("Customize Controls…") { library.showControls = true }
             Toggle("Show Labels", isOn: $controlLabels)
+            if labFixes, !floating {
+                Divider()
+                Button(fixesMode ? "Close Fixes" : "Fixes…") { toggleFixes() }
+            }
         }
     }
 
@@ -205,6 +219,9 @@ struct PhotoView: View {
                     .disabled(!enabled(c))
             }
             Divider()
+            if labFixes, !controls.contains(.fixes), !floating {
+                Button("Fixes…") { toggleFixes() }
+            }
             Button("Customize Controls…") { library.showControls = true }
         } label: {
             Image(systemName: "chevron.right.2").frame(width: 28, height: 28).contentShape(Rectangle())
@@ -235,7 +252,12 @@ struct PhotoView: View {
         case .photos: library.addToPhotos(ids)
         case .undo: library.undo()
         case .viewOptions: withAnimation { library.showSettings.toggle() }
+        case .fixes: toggleFixes()
         }
+    }
+
+    private func toggleFixes() {
+        if fixesMode { library.fixesTool = false } else { library.openFixes(photo.id) }
     }
 
     private func enabled(_ c: PhotoControl) -> Bool {
@@ -268,6 +290,7 @@ struct PhotoView: View {
         case .history: on = showHistory
         case .compare: on = compare != .off
         case .viewOptions: on = library.showSettings
+        case .fixes: on = fixesMode
         default: on = false
         }
         return on ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)
@@ -375,9 +398,10 @@ struct PhotoView: View {
     /// The photo at a rotation, centered in a canvas of `area`.
     /// The photo as it will be saved: rotated, then cropped to fill its frame, so there are never tilted
     /// edges or a dimmed background around it.
-    private func photoLayer(_ fit: CGSize, rotation: Double, area: CGSize, crop: CGRect? = nil) -> some View {
+    /// - Parameter fixed: with the photo's film scan fix (off for "before" / original layers).
+    private func photoLayer(_ fit: CGSize, rotation: Double, area: CGSize, crop: CGRect? = nil, fixed: Bool = true) -> some View {
         ZStack {
-            if let image { EditedImage(image: image, rotation: rotation, crop: crop) }
+            if let image { EditedImage(image: image, rotation: rotation, crop: crop, fix: fixed && !showOriginal ? photo.bandFixSource : nil) }
         }
         .frame(width: fit.width, height: fit.height)
         .frame(width: area.width, height: area.height)
@@ -401,13 +425,13 @@ struct PhotoView: View {
             let comparing = interactive && !showOriginal
 
             ZStack(alignment: .topLeading) {
-                photoLayer(fit, rotation: rotation, area: area, crop: crop)
+                photoLayer(fit, rotation: rotation, area: area, crop: crop, fixed: interactive)
 
                 if comparing && !cropMode && compare == .overlay {
-                    photoLayer(originalFit, rotation: 0, area: area).opacity(overlayOpacity)
+                    photoLayer(originalFit, rotation: 0, area: area, fixed: false).opacity(overlayOpacity)
                 }
                 if comparing && !cropMode && compare == .split {
-                    photoLayer(originalFit, rotation: 0, area: area)
+                    photoLayer(originalFit, rotation: 0, area: area, fixed: false)
                         .mask(alignment: .leading) { Rectangle().frame(width: splitX * area.width) }
                 }
 
@@ -533,6 +557,7 @@ struct PhotoView: View {
 
     private func openLevelTool() {
         if cropMode { cancelCrop() }
+        library.fixesTool = false
         chipHover = false; peek = nil
         withAnimation(.easeOut(duration: 0.15)) { library.levelTool = true }
     }
@@ -733,6 +758,7 @@ struct PhotoView: View {
     }
 
     private func startCrop() {
+        library.fixesTool = false
         pick.clear()
         showOriginal = false
         cropDraft = photo.crop ?? CropMath.full
@@ -813,6 +839,17 @@ struct PhotoView: View {
     }
 
     private func handle(_ press: KeyPress) -> KeyPress.Result {
+        if fixesMode {
+            // Esc / ↵ close Fixes; arrows still move between photos (the panel stays open); nothing else.
+            guard press.phase == .down else { return .handled }
+            switch press.key {
+            case .escape, .return: library.fixesTool = false
+            case .leftArrow, .upArrow: library.step(-1)
+            case .rightArrow, .downArrow: library.step(1)
+            default: return .ignored
+            }
+            return .handled
+        }
         if cropMode {
             guard press.phase == .down else { return .handled }
             if press.key == .return { finishCrop() } else if press.key == .escape { cancelCrop() }

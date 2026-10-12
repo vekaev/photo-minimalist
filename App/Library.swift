@@ -133,7 +133,7 @@ final class Library {
                 }
                 return a.offset < b.offset
             }.map(\.element)
-        case .leveled: return photos.filter { $0.decision == .level }
+        case .leveled: return photos.filter { $0.decision == .level || $0.bandFix != nil }
         case .kept: return photos.filter { $0.decision == .keep }
         case .favorites: return photos.filter(\.favorite)
         case .all: return photos
@@ -434,8 +434,11 @@ final class Library {
             // Render from the untouched backup with the total rotation, unless an earlier save already cropped
             // the file: then the current file is the base (a crop can't be re-derived from the backup).
             let fromBackup = !p.savedHadCrop
-            let total = fromBackup ? p.savedCorrection + p.correction : p.correction
-            let crop = p.crop
+            let total = fromBackup ? p.savedCorrection + p.appliedCorrection : p.appliedCorrection
+            let crop = p.appliedCrop
+            // From the untouched backup the earlier saved band fix has to be applied again (unless a new one replaces
+            // it); from the current file only a new fix is applied (an earlier one is already in it).
+            let band = fromBackup ? (p.bandFix ?? p.savedBandFix) : p.bandFix
             let source = p.url
             let format: ExportFormat = { switch source.pathExtension.lowercased() {
                 case "heic", "heif": return .heic
@@ -449,7 +452,8 @@ final class Library {
                         try fm.copyItem(at: source, to: backup)
                     }
                     let temp = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString + "." + source.pathExtension)
-                    try Renderer.export(source: fromBackup ? backup : source, degrees: total, crop: crop, to: temp, format: format, quality: 0.96)
+                    try Renderer.export(source: fromBackup ? backup : source, degrees: total, crop: crop, bandFix: band,
+                                        to: temp, format: format, quality: 0.96)
                     _ = try fm.replaceItemAt(source, withItemAt: temp)
                     return nil
                 } catch { return error.localizedDescription }
@@ -457,8 +461,11 @@ final class Library {
             if let result { failed.append("\(p.name): \(result)"); continue }
             p.savedCorrection = fromBackup ? total : p.savedCorrection + total
             p.savedHadCrop = p.savedHadCrop || crop != nil
-            p.startFresh(label: "Saved to original " + Geometry.format(total) + (crop != nil ? " · cropped" : ""))
+            if fromBackup { p.savedBandFix = band } else if band != nil { p.savedBandFix = band }
+            p.startFresh(label: "Saved to original " + Geometry.format(total) + (crop != nil ? " · cropped" : "")
+                         + (band != nil ? " · bands fixed" : ""))
             ImageCache.shared.evict(p.url)
+            BandFixStore.shared.evict(p.url)
             analyzedCount -= 1
             saved += 1
             savedIDs.append(p.id)
@@ -489,8 +496,10 @@ final class Library {
             do {
                 _ = try FileManager.default.replaceItemAt(p.url, withItemAt: backup)
                 p.savedCorrection = 0
+                p.savedBandFix = nil
                 p.startFresh(label: "Original restored")
                 ImageCache.shared.evict(p.url)
+                BandFixStore.shared.evict(p.url)
                 analyzedCount -= 1
                 restored += 1
                 restoredIDs.append(p.id)
@@ -540,7 +549,7 @@ final class Library {
         switch f {
         case .all: return true
         case .review: return hasSuggestion(p)
-        case .leveled: return p.decision == .level
+        case .leveled: return p.decision == .level || p.bandFix != nil
         case .kept: return p.decision == .keep
         case .favorites: return p.favorite
         case .crops: return p.cropVersions.count >= 2
@@ -566,7 +575,9 @@ final class Library {
 
     /// The level tool is open in the preview (Mac) / editor (iPhone): headline, As shot | Leveled switch, ruler,
     /// guide line and the two-point picker. Closed, the preview is just the photo. R (Mac) or the level button.
-    var levelTool = false
+    var levelTool = false {
+        didSet { if levelTool { fixesTool = false } }
+    }
     /// Photos just leveled from the corner chip (or L), for ~4 s, so the chip can offer "Leveled · Undo" even after
     /// the view moved on to the next photo.
     var justLeveled: [String] = []
@@ -995,6 +1006,100 @@ final class Library {
         commit([id], .versionChoose, before: before, summary: "Chose crop version \(i + 1) for \(Self.shortName(id))")
     }
 
+    // MARK: Film scan fixes (hidden; Settings ▸ Advanced ▸ "Film scan fixes")
+
+    /// Settings ▸ Advanced: shows the Fixes menus, panel and buttons. Off by default (a personal feature).
+    static let labFixesKey = "labFixes"
+    static var labFixes: Bool { UserDefaults.standard.bool(forKey: labFixesKey) }
+
+    /// Mac: the Fixes panel is open in the preview (like the level tool). iPhone: the Fixes sheet.
+    var fixesTool = false
+
+    /// Sets (or, with nil, removes) one photo's band fix as one undoable step.
+    func setBandFix(_ id: String, _ settings: BandFixSettings?) {
+        guard let p = byID[id], p.bandFix != settings else { return }
+        let before = journalStates([id])
+        p.record(p.decision, correction: p.correction,
+                 label: settings == nil ? "Band fix removed" : (p.bandFix == nil ? "Bands fixed" : "Band fix adjusted"),
+                 bandFix: .some(settings))
+        commit([id], .bandFix, before: before)
+    }
+
+    /// Removes the band fix from the photos that have one (one undo step).
+    func removeBandFix(_ ids: [String]) {
+        let items = ids.compactMap { byID[$0] }.filter { $0.bandFix != nil }
+        guard !items.isEmpty else { toast = "No band fix to remove"; return }
+        let before = journalStates(items.map(\.id))
+        for p in items { p.record(p.decision, correction: p.correction, label: "Band fix removed", bandFix: .some(nil)) }
+        commit(items.map(\.id), .bandFix, before: before,
+               summary: items.count == 1 ? nil : "Removed the band fix from \(items.count) photos")
+        toast = items.count == 1 ? "Band fix removed" : "Removed the band fix from \(items.count) photos"
+    }
+
+    /// Detects the bands on each photo (in the background, through the ReadGate) and stores `settings` on those
+    /// where something gets corrected. Photos where neither side is found (and `force` is off) get no fix.
+    /// One undo step for all of them; a toast says how many were fixed.
+    func applyBandFix(_ ids: [String], settings: BandFixSettings = .init()) {
+        let items = ids.compactMap { byID[$0] }
+        guard !items.isEmpty else { return }
+        toast = items.count == 1 ? "Looking for shutter bands…" : "Looking for shutter bands on \(items.count) photos…"
+        let jobs = items.map { ($0.id, $0.url) }
+        let folder = self.folder
+        Task { [weak self] in
+            var found: [String] = []
+            await withTaskGroup(of: (String, Bool).self) { group in
+                var next = 0
+                func add() {
+                    let (id, url) = jobs[next]
+                    next += 1
+                    group.addTask(priority: .userInitiated) {
+                        let a = await BandFixStore.shared.analysis(url: url, settings: settings, onScreen: true)   // asked for: before the background check
+                        return (id, a?.changesImage ?? false)
+                    }
+                }
+                for _ in 0..<min(3, jobs.count) { add() }
+                for await (id, fixes) in group {
+                    if fixes { found.append(id) }
+                    if next < jobs.count { add() }
+                }
+            }
+            guard let self, self.folder == folder else { return }
+            self.storeBandFix(found, settings: settings, of: items.count)
+        }
+    }
+
+    private func storeBandFix(_ found: [String], settings: BandFixSettings, of total: Int) {
+        let order = Dictionary(uniqueKeysWithValues: photos.enumerated().map { ($1.id, $0) })
+        let changing = found.compactMap { byID[$0] }.filter { $0.bandFix != settings }.sorted { (order[$0.id] ?? 0) < (order[$1.id] ?? 0) }
+        if !changing.isEmpty {
+            let before = journalStates(changing.map(\.id))
+            for p in changing {
+                p.record(p.decision, correction: p.correction, label: p.bandFix == nil ? "Bands fixed" : "Band fix adjusted",
+                         bandFix: .some(settings))
+            }
+            commit(changing.map(\.id), .bandFix, before: before,
+                   summary: changing.count == 1 ? nil : "Fixed bands on \(changing.count) photos")
+        }
+        let clean = total - found.count
+        if total == 1 {
+            toast = found.isEmpty ? "No shutter bands found" : "Fixed the shutter bands"
+        } else {
+            toast = "Fixed bands on \(found.count) of \(total)" + (clean > 0 ? " (\(clean) clean)" : "")
+        }
+    }
+
+    /// Opens the Fixes panel on a photo (Mac: in the preview; iPhone: the editor's sheet).
+    func openFixes(_ id: String) {
+        if openedID != id {
+            if !navigation.contains(id) { navigation = visible.map(\.id); if !navigation.contains(id) { navigation = photos.map(\.id) } }
+            openedID = id
+        }
+        if !selection.contains(id) { selection = [id] }
+        quickLook = false
+        levelTool = false
+        fixesTool = true
+    }
+
     // MARK: Navigation
 
     func openPhoto(_ id: String) {
@@ -1036,7 +1141,7 @@ final class Library {
 
     func saveNow() {
         guard let folder else { return }
-        let state = Dictionary(uniqueKeysWithValues: photos.filter { $0.analyzed || $0.history.count > 1 || $0.favorite || !$0.cropVersions.isEmpty || $0.info != nil }.map { ($0.id, $0.saved) })
+        let state = Dictionary(uniqueKeysWithValues: photos.filter { $0.analyzed || $0.history.count > 1 || $0.favorite || !$0.cropVersions.isEmpty || $0.info != nil || $0.savedBandFix != nil }.map { ($0.id, $0.saved) })
         guard let data = try? JSONEncoder().encode(state) else { return }
         try? data.write(to: folder.appendingPathComponent(Self.stateFileName), options: .atomic)
     }
@@ -1053,7 +1158,7 @@ extension Library {
         func box(_ r: CGRect) -> [Double] { [r.minX, r.minY, r.width, r.height].map { Double($0) } }
         return JournalState(d: p.decision, c: p.correction, crop: p.crop.map(box), fav: p.favorite ? true : nil,
                             versions: p.cropVersions.isEmpty ? nil : p.cropVersions.map { .init(id: $0.id, r: box($0.rect), ratio: $0.ratio) },
-                            chosen: p.chosenVersionID)
+                            chosen: p.chosenVersionID, band: p.bandFix)
     }
 
     func journalStates(_ ids: [String]) -> [String: JournalState] {
@@ -1105,6 +1210,9 @@ extension Library {
         case .versionAdd: return "Added a crop version to \(subject)"
         case .versionChoose: return "Chose a crop version for \(subject)"
         case .versionRemove: return "Removed a crop version from \(subject)"
+        case .bandFix:
+            guard let one else { return "Fixed bands on \(subject)" }
+            return after[files[0]]?.band == nil ? "Removed the band fix from \(one)" : "Fixed bands on \(one)"
         case .favorite: return "Favorited \(subject)"
         case .unfavorite: return "Unfavorited \(subject)"
         case .delete: return "Moved \(subject) to the Trash"
@@ -1220,7 +1328,7 @@ extension Library {
     @discardableResult
     func apply(_ s: JournalState, to p: Photo, label: String) -> Bool {
         let index = p.index, count = p.history.count
-        p.record(s.d, correction: s.c, label: label, crop: .some(s.cropRect))
+        p.record(s.d, correction: s.c, label: label, crop: .some(s.cropRect), bandFix: .some(s.band))
         p.favorite = s.isFavorite
         let old = Dictionary(p.cropVersions.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         p.cropVersions = (s.versions ?? []).compactMap { v in

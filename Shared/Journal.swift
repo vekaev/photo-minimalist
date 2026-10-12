@@ -12,6 +12,8 @@ enum JournalAction: String, Codable, Sendable {
     /// Corrections: the suggested angle, the ruler, two points, [ ] nudges, automatic level, history jump.
     case tilt, ruler, twoPoint, nudge, autoLevel, jump
     case crop, versionAdd, versionChoose, versionRemove
+    /// Film scan fix (shutter bands): added, adjusted or removed.
+    case bandFix
     case favorite, unfavorite
     case delete, restoreFromTrash
     case saveToOriginal, restoreOriginal
@@ -33,6 +35,8 @@ struct JournalState: Codable, Equatable, Sendable {
     var fav: Bool?
     var versions: [Version]?
     var chosen: UUID?
+    /// Film scan fix settings (shutter bands); nil = none.
+    var band: BandFixSettings?
 
     struct Version: Codable, Equatable, Sendable {
         var id: UUID

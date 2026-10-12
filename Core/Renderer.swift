@@ -59,8 +59,11 @@ public enum Renderer {
         return image.cropped(to: r).transformed(by: CGAffineTransform(translationX: -r.minX, y: -r.minY))
     }
 
-    public static func export(source: URL, degrees: Double, crop: CGRect? = nil, to destination: URL, format: ExportFormat, quality: Double) throws {
-        guard let image = loadFullImage(source) else { throw RenderError.unreadable(source) }
+    /// - Parameter bandFix: optional Band Fixer settings, applied to the upright full image before leveling / crop.
+    public static func export(source: URL, degrees: Double, crop: CGRect? = nil, bandFix: BandFixSettings? = nil,
+                              to destination: URL, format: ExportFormat, quality: Double) throws {
+        guard var image = loadFullImage(source) else { throw RenderError.unreadable(source) }
+        if let bandFix { image = bandFixed(image, source: source, settings: bandFix) }
         let output = cropped(leveled(image, degrees: degrees), to: crop)
         let space = CGColorSpace(name: format == .jpeg ? CGColorSpace.sRGB : CGColorSpace.displayP3)!
         guard let cg = context.createCGImage(output, from: output.extent, format: format == .tiff ? .RGBA16 : .RGBA8, colorSpace: space) else {
@@ -77,8 +80,26 @@ public enum Renderer {
         guard CGImageDestinationFinalize(dest) else { throw RenderError.writeFailed(destination) }
     }
 
+    /// Removes the M6 shutter edge bands (`BandFixer`) from the upright full image, in linear light.
+    /// JPEG / HEIC / TIFF sources are decoded straight from the file so the samples match the reference exactly;
+    /// RAW (already developed by Core Image) goes through a 16-bit sRGB render. Returns `image` when nothing changes.
+    public static func bandFixed(_ image: CIImage, source: URL, settings: BandFixSettings) -> CIImage {
+        let cg: CGImage?
+        if ImageLoader.isRaw(source) {
+            cg = context.createCGImage(image, from: image.extent, format: .RGBA16, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+        } else {
+            cg = BandFixer.loadOriented(source)
+        }
+        guard let cg else { return image }
+        let analysis = BandFixer.analyze(cgImage: cg, settings: settings)
+        guard analysis.changesImage else { return image }
+        let fixed = BandFixer.apply(analysis, to: cg)
+        let e = image.extent
+        return CIImage(cgImage: fixed).transformed(by: CGAffineTransform(translationX: e.minX, y: e.minY))
+    }
+
     /// EXIF, GPS, IPTC and TIFF metadata from the original, with orientation and pixel size updated.
-    private static func metadata(of url: URL, width: Int, height: Int) -> [CFString: Any] {
+    static func metadata(of url: URL, width: Int, height: Int) -> [CFString: Any] {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let all = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] else { return [:] }
         var out: [CFString: Any] = [:]

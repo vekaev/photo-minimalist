@@ -195,6 +195,7 @@ Photo Minimalist is early, and we want to be straight about it:
 - **Detection is a helper, not an oracle.** On a real 969-photo shoot the detectors had some reading for 560 photos; only the 163 they're sure about (17 %) get a suggestion, the rest stay quiet. The level tool levels any of those by hand.
 - **RAW files can't be rewritten.** Saving into originals changes the JPEG; the RAF stays as shot. XMP sidecars for Lightroom are on the roadmap.
 - **Not notarized yet**, and the iPhone app isn't on the App Store; build it from source.
+- **Experimental:** Settings ▸ Advanced ▸ *Film scan fixes* (off by default) removes the dark shutter bands a Leica M6 left near the edges of some film scans, non-destructively.
 
 ## Roadmap
 

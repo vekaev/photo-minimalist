@@ -36,6 +36,12 @@ struct EditorView: View {
     @State private var showInfo = false
     /// Holding the corner chip: preview the leveled photo and show the suggested line.
     @State private var chipHold = false
+    /// Settings ▸ Advanced ▸ "Film scan fixes" (hidden feature): the Fixes sheet and its menu items.
+    @AppStorage(Library.labFixesKey) private var labFixes = false
+    /// While the Fixes sheet is open: the settings shown on the photo, and Before (no fix).
+    @State private var fixDraft = BandFixSettings()
+    @State private var fixBefore = false
+    private var fixesOpen: Bool { labFixes && library.fixesTool }
 
     /// The level tool is open (shared with the Mac's R; stays open from photo to photo until Done).
     private var levelMode: Bool { library.levelTool && !cropMode }
@@ -77,6 +83,16 @@ struct EditorView: View {
                     .presentationDragIndicator(.visible)
                     .presentationBackgroundInteraction(.enabled(upThrough: .height(380)))
             }
+            // Fixes (hidden feature): a sheet over the photo; the photo shows its settings live.
+            .sheet(isPresented: Binding(get: { fixesOpen }, set: { if !$0 { library.fixesTool = false } })) {
+                FixesSheet(photo: photo, draft: $fixDraft, showBefore: $fixBefore)
+                    .presentationDetents([.height(420), .large])
+                    .presentationDragIndicator(.visible)
+                    .presentationBackgroundInteraction(.enabled(upThrough: .height(420)))
+            }
+            .onChange(of: library.fixesTool) { if library.fixesTool { fixDraft = photo.bandFix ?? BandFixSettings(); fixBefore = false } }
+            .onChange(of: photo.bandFix) { _, stored in if fixesOpen { fixDraft = stored ?? BandFixSettings() } }
+            .onChange(of: photo.id) { if fixesOpen { fixDraft = photo.bandFix ?? BandFixSettings() } }
             // History from the settings sheet: the folder's activity, "This photo" filters to this one.
             .sheet(isPresented: Binding(get: { library.showActivity }, set: { library.showActivity = $0 })) {
                 ActivityView(photoID: photo.id).environment(library)
@@ -146,11 +162,14 @@ struct EditorView: View {
                 .disabled(!enabled(c, p))
                 .accessibilityLabel(accessibility(c, p))
             }
-            if shown < all.count {
+            if shown < all.count || (labFixes && !all.contains(.fixes)) {
                 Menu {
                     ForEach(all.dropFirst(shown)) { c in
                         Button(role: c == .trash ? .destructive : nil) { perform(c, p) } label: { Label(c.title, systemImage: symbol(c, p)) }
                             .disabled(!enabled(c, p))
+                    }
+                    if labFixes && !all.contains(.fixes) {
+                        Button { perform(.fixes, p) } label: { Label(PhotoControl.fixes.title, systemImage: PhotoControl.fixes.symbol) }
                     }
                 } label: {
                     Image(systemName: "ellipsis").font(.system(size: 17, weight: .medium))
@@ -183,6 +202,7 @@ struct EditorView: View {
         case .undo: library.undo()
         case .info: showInfo = true
         case .viewOptions: library.showSettings = true
+        case .fixes: openFixes(p)
         case .compare, .export: break   // not on iPhone (see PhotoControl.available)
         }
     }
@@ -210,6 +230,12 @@ struct EditorView: View {
         case .level: return levelMode ? "Close the level tool" : "Level tool"
         default: return c.title
         }
+    }
+
+    private func openFixes(_ p: Photo) {
+        cropMode = false
+        pick.clear()
+        library.openFixes(p.id)
     }
 
     private func toggleLevelTool() {
@@ -377,13 +403,20 @@ struct EditorView: View {
 
     private func photoLayer(fit: CGSize, rotation: Double, area: CGSize, crop: CGRect?) -> some View {
         ZStack {
-            if let image { EditedImage(image: image, rotation: rotation, crop: crop) }
+            if let image { EditedImage(image: image, rotation: rotation, crop: crop, fix: shownFix, fixMaxPixel: fixesOpen ? 2000 : nil) }
         }
         .frame(width: fit.width, height: fit.height)
         .frame(width: area.width, height: area.height)
     }
 
     private var imageAspect: CGFloat { image.map { CGFloat($0.width) / CGFloat($0.height) } ?? 1.5 }
+
+    /// The film scan fix on screen: the sheet's draft while it's open (none for Before), else the stored one.
+    private var shownFix: BandFixSource? {
+        guard let p = photo, !showOriginal else { return nil }
+        if fixesOpen { return fixBefore ? nil : BandFixSource(url: p.url, settings: fixDraft) }
+        return p.bandFixSource
+    }
 
     // MARK: Crop
 
@@ -690,6 +723,7 @@ private struct SettingsSheet: View {
     @AppStorage("ios.thumbFill") private var thumbFill = true
     @AppStorage(Library.confirmDeleteKey) private var confirmDelete = true
     @AppStorage(AppAppearance.key) private var appearance: AppAppearance = .system
+    @AppStorage(Library.labFixesKey) private var labFixes = false
     let photo: Photo
     @Binding var lines: Lines
     @Binding var showGuide: Bool
@@ -730,6 +764,13 @@ private struct SettingsSheet: View {
                     if library.hasBackup(photo) {
                         Button("Restore Original") { library.restoreOriginals([photo.id]) }
                     }
+                    if labFixes {
+                        Button("Fixes…") {
+                            library.showSettings = false
+                            let id = photo.id
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { library.openFixes(id) }
+                        }
+                    }
                     Button("History") {
                         library.showSettings = false
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { library.showActivity = true }
@@ -766,6 +807,13 @@ private struct SettingsSheet: View {
                         ForEach(AppAppearance.allCases) { Text($0.label).tag($0) }
                     }
                     .pickerStyle(.segmented)
+                }
+                Section {
+                    Toggle("Film scan fixes", isOn: $labFixes)
+                } header: {
+                    Text("Advanced")
+                } footer: {
+                    Text("Experimental: removes dark shutter bands near the frame edges of film scans (Leica M6).")
                 }
             }
             .navigationTitle("Settings")

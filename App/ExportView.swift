@@ -123,7 +123,7 @@ struct ExportView: View {
 
     private func start(_ items: [Photo]) {
         guard let dest = destinationURL else { return }
-        let jobs = items.map { (id: $0.id, url: $0.url, degrees: $0.correction, crop: $0.crop) }
+        let jobs = items.map { (id: $0.id, url: $0.url, degrees: $0.appliedCorrection, crop: $0.appliedCrop, band: $0.bandFix) }
         let format = format, quality = quality, writeLog = writeLog
         done = 0; failures = []; running = true; finished = false
 
@@ -139,7 +139,8 @@ struct ExportView: View {
                     group.addTask(priority: .userInitiated) {
                         let out = dest.appendingPathComponent(job.id).deletingPathExtension().appendingPathExtension(format.fileExtension)
                         do {
-                            try Renderer.export(source: job.url, degrees: job.degrees, crop: job.crop, to: out, format: format, quality: quality)
+                            try Renderer.export(source: job.url, degrees: job.degrees, crop: job.crop, bandFix: job.band,
+                                                to: out, format: format, quality: quality)
                             return (job.id, job.degrees, out.lastPathComponent, nil)
                         } catch {
                             return (job.id, job.degrees, nil, error.localizedDescription)

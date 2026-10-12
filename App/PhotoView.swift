@@ -472,6 +472,11 @@ struct PhotoView: View {
             .clipped()
             .contentShape(Rectangle())
             .coordinateSpace(name: "canvas")
+            // Right-click the photo: the same menu as in the list (decide, ♥, copy, save, trash, fixes…),
+            // for this photo or the whole selection.
+            .contextMenu {
+                if interactive && !cropMode && !fixesMode { StatusMenu(ids: library.targets(for: photo.id)) }
+            }
             .gesture(interactive && levelMode ? pickGesture(photo: frame) : nil)
             .onContinuousHover(coordinateSpace: .named("canvas")) { phase in
                 guard interactive, levelMode, pick.points.count == 1, pick.active == nil else { if pick.hover != nil { pick.hover = nil }; return }

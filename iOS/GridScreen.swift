@@ -11,7 +11,6 @@ struct GridScreen: View {
     @State private var selecting = false
     @State private var picked: Set<String> = []
     /// Settings ▸ Advanced ▸ "Film scan fixes" (hidden feature).
-    @AppStorage(Library.labFixesKey) private var labFixes = false
 
     private func photos(_ t: Filter) -> [Photo] { library.photos(for: t) }
 
@@ -64,18 +63,6 @@ struct GridScreen: View {
                                     }
                                     Button(role: .destructive) { library.resetToOriginal([p.id]) } label: {
                                         Label("Reset Decision", systemImage: "arrow.counterclockwise")
-                                    }
-                                    if labFixes {
-                                        Menu {
-                                            Button { library.applyBandFix([p.id]) } label: {
-                                                Label("Remove Shutter Bands", systemImage: "wand.and.rays")
-                                            }
-                                            if p.bandFix != nil {
-                                                Button { library.removeBandFix([p.id]) } label: {
-                                                    Label("Remove Fix", systemImage: "xmark.circle")
-                                                }
-                                            }
-                                        } label: { Label("Fixes", systemImage: "wand.and.rays") }
                                     }
                                     Divider()
                                     Button(role: .destructive) { library.requestDelete([p.id]) } label: {
@@ -262,20 +249,6 @@ struct GridScreen: View {
             barButton("heart", "Favorite") { library.toggleFavorite(ids) }
             barButton("level", "Level") { library.decide(ids, .level) }
             barButton("trash", "Delete") { library.requestDelete(ids) }
-            if labFixes {
-                Menu {
-                    Button { library.applyBandFix(ids) } label: { Label("Fix bands", systemImage: "wand.and.rays") }
-                    Button { library.removeBandFix(ids) } label: { Label("Remove Fix", systemImage: "xmark.circle") }
-                        .disabled(!ids.contains { library.photo($0)?.bandFix != nil })
-                } label: {
-                    VStack(spacing: 2) {
-                        Image(systemName: "ellipsis.circle").font(.system(size: 17, weight: .medium))
-                        Text("More").font(.caption2)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 50)
-                }
-                .disabled(picked.isEmpty)
-            }
             Button { withAnimation(.easeOut(duration: 0.15)) { selecting = false; picked = [] } } label: {
                 Text("Done").font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 50)
             }

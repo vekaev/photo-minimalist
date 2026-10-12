@@ -91,7 +91,8 @@ enum PhotoControl: String, CaseIterable, Identifiable {
     /// iPhone: Info is the "3 / 120 ⓘ" counter (always there), View options is the settings button (always
     /// there, it's where the bar is customized), compare isn't built, export works on the whole folder from the grid.
     func available(on platform: Platform) -> Bool {
-        if self == .fixes { return UserDefaults.standard.bool(forKey: "labFixes") }
+        // Film scan fixes are Mac-only (the owner's choice), and only while Settings ▸ Advanced has them on.
+        if self == .fixes { return platform == .mac && UserDefaults.standard.bool(forKey: "labFixes") }
         switch platform {
         case .mac: return true
         case .phone: return ![.info, .viewOptions, .compare, .export].contains(self)

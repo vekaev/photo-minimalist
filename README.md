@@ -16,7 +16,7 @@ straighten crooked horizons in a keystroke, and crop. Native Swift, on-device, n
 
 <br>
 
-[![Download for macOS](https://img.shields.io/badge/Download-macOS-000000?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/vekaev/horizon-leveler/releases/latest/download/PhotoMinimalist-mac.dmg)
+[![Download for macOS](https://img.shields.io/badge/Download-macOS-000000?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/vekaev/photo-minimalist/releases/latest/download/PhotoMinimalist-mac.dmg)
 
 <sub>Universal (Apple Silicon + Intel). Not notarized yet: the first time, right-click the app → <b>Open</b>. The iPhone app builds from source (see <a href="#get-started">Get started</a>).</sub>
 
@@ -114,7 +114,7 @@ straighten crooked horizons in a keystroke, and crop. Native Swift, on-device, n
   <tr>
     <td width="33%" valign="top">
       <h4>🗂️ Library</h4>
-      Folders and subfolders · memory cards (insert one and it offers to open it: <i>Ask</i>, <i>Open automatically</i> or <i>Do nothing</i>) · several folders at once: on the Mac each in its own tab in a thin bar at the top of the window (<b>+</b> or <kbd>⌘O</kbd> opens a folder in a new tab, <kbd>⌘T</kbd> an empty tab, <kbd>⌘W</kbd> closes one, <kbd>⌘1</kbd>…<kbd>⌘9</kbd> / <kbd>⌃Tab</kbd> switch, drag to reorder; a dropped folder opens a new tab when this one is in use; all tabs reopen at launch), on iPhone <b>Recent</b> folders on the start screen and <b>Switch folder</b> in ⋯ · RAW + JPEG pairs shown as one photo with a <b>RAF</b> mark · tabs: All · Tilted (a confident tilt, not decided) · Edited (leveled or cropped) · ♥ · favorites (<kbd>F</kbd>) get Finder's Red tag on the Mac, and Red-tagged files open as favorites · <b>Add to Photos</b> imports the originals (RAW as the alternate) with favorites kept, and <b>Mark Favorites in Photos</b> hearts copies already there (Apple Photos ignores Finder tags, so this goes through PhotoKit) · shot order or biggest tilts first · <b>photo info</b>: date taken, camera and lens, focal length · aperture · shutter · ISO, pixels and file size (+ RAW), read from the file header only and cached; with the preview hidden the list shows Finder-like columns, otherwise one line under each name; <kbd>I</kbd> in the preview (iPhone: tap the ⓘ counter) shows everything · list with preview, or a grid of whole photos (Lightroom-style) or cropped tiles.
+      Folders and subfolders · memory cards (insert one and it offers to open it: <i>Ask</i>, <i>Open automatically</i> or <i>Do nothing</i>) · several folders at once: on the Mac each in its own tab in a thin bar at the top of the window (<b>+</b> or <kbd>⌘O</kbd> opens a folder in a new tab, <kbd>⌘T</kbd> an empty tab, <kbd>⌘W</kbd> closes one, <kbd>⌘1</kbd>…<kbd>⌘9</kbd> / <kbd>⌃Tab</kbd> switch, drag to reorder; a dropped folder opens a new tab when this one is in use; all tabs reopen at launch), on iPhone <b>Recent</b> folders on the start screen and <b>Switch folder</b> in ⋯ · RAW + JPEG pairs shown as one photo with a <b>RAF</b> mark · tabs: All · Tilted (a confident tilt, not decided) · Edited (leveled or cropped) · ♥ · favorites (<kbd>F</kbd>) get Finder's Red tag on the Mac, and Red-tagged files open as favorites · <b>Add to Photos</b> imports the originals (RAW as the alternate) with favorites kept, and <b>Mark Favorites in Photos</b> hearts copies already there (Apple Photos ignores Finder tags, so this goes through PhotoKit) · shot order or biggest tilts first · <b>photo info</b>: date taken, camera and lens, focal length · aperture · shutter · ISO, pixels and file size (+ RAW), read from the file header only and cached; with the preview hidden the list shows Finder-like columns, otherwise one line under each name; <kbd>I</kbd> in the preview (iPhone: tap the ⓘ counter) shows everything · <b>your own control bar</b> above the photo: right-click it ▸ <i>Customize Controls…</i> to choose and reorder buttons (Level, Crop, ♥, Original ⇄ result, Info, History, Compare, Copy, Save, Export, Trash, Add to Photos…), optional labels; on iPhone Settings ▸ Editor buttons · list with preview, or a grid of whole photos (Lightroom-style) or cropped tiles.
     </td>
     <td width="33%" valign="top">
       <h4>📐 Leveling and crop</h4>
@@ -180,7 +180,7 @@ leveler-cli make-test /tmp/tilted           # synthetic photos with known tilts,
 
 ```bash
 brew install xcodegen
-git clone https://github.com/vekaev/horizon-leveler && cd horizon-leveler
+git clone https://github.com/vekaev/photo-minimalist && cd photo-minimalist
 scripts/build-app.sh --install        # Mac: universal app + DMG, installs to ~/Applications and opens it
 ```
 

@@ -125,49 +125,30 @@ struct PhotoView: View {
         }
     }
 
-    // MARK: Top row: name, position, history, view options
+    // MARK: Top row: name, position, status, then the customizable control bar
+
+    @AppStorage(PhotoControl.macKey) private var controlsRaw = PhotoControl.defaultValue(.mac)
+    @AppStorage(PhotoControl.macLabelsKey) private var controlLabels = false
+    /// Width left for the control bar (measured), so extra controls go into the "»" menu instead of wrapping.
+    @State private var barWidth: CGFloat = 0
+
+    private var controls: [PhotoControl] { PhotoControl.parse(controlsRaw, on: .mac) }
 
     private var topRow: some View {
         let position = (library.navigation.firstIndex(of: photo.id) ?? 0) + 1
         return HStack(spacing: 10) {
-            Text(photo.name).font(.callout.weight(.medium)).lineLimit(1).truncationMode(.middle)
-            Text("\(position) / \(library.navigation.count)").font(.callout).foregroundStyle(.tertiary).monospacedDigit()
-            // Decided photos say so quietly: "Leveled −1.3°", "Cropped 4:5", "Kept as shot".
-            if photo.decision != .undecided {
-                Text(library.note(for: photo)).font(.callout).foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
+            // The name and status get their room first; the bar takes what's left.
+            HStack(spacing: 10) {
+                Text(photo.name).font(.callout.weight(.medium)).lineLimit(1).truncationMode(.middle)
+                Text("\(position) / \(library.navigation.count)").font(.callout).foregroundStyle(.tertiary).monospacedDigit()
+                    .lineLimit(1).fixedSize()
+                // Decided photos say so quietly: "Leveled −1.3°", "Cropped 4:5", "Kept as shot".
+                if photo.decision != .undecided {
+                    Text(library.note(for: photo)).font(.callout).foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
+                }
             }
-            Spacer()
-            Button { library.toggleFavorite(library.targets(for: photo.id)) } label: {
-                Image(systemName: photo.favorite ? "heart.fill" : "heart").frame(width: 28, height: 28).contentShape(Rectangle())
-                    .foregroundStyle(photo.favorite ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
-            }
-            .buttonStyle(.plain)
-            .help(photo.favorite ? "Unfavorite (F)" : "Favorite (F), also tags the file Red in Finder")
-            Button { showHistory.toggle() } label: {
-                Image(systemName: "clock.arrow.circlepath").frame(width: 28, height: 28).contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("History")
-            .popover(isPresented: $showHistory, arrowEdge: .bottom) { history.padding(14).frame(width: 300) }
-            Button { showInfo.toggle() } label: {
-                Image(systemName: showInfo ? "info.circle.fill" : "info.circle").frame(width: 28, height: 28).contentShape(Rectangle())
-                    .foregroundStyle(showInfo ? .primary : .secondary)
-            }
-            .buttonStyle(.plain)
-            .help("Info (I)")
-            Button { toggleLevelTool() } label: {
-                Image(systemName: "level").frame(width: 28, height: 28).contentShape(Rectangle())
-                    .foregroundStyle(levelMode ? .primary : .secondary)
-            }
-            .buttonStyle(.plain)
-            .help("Level (R)")
-            Button { cropMode ? cancelCrop() : startCrop() } label: {
-                Image(systemName: "crop").frame(width: 28, height: 28).contentShape(Rectangle())
-                    .foregroundStyle(cropMode ? .primary : .secondary)
-            }
-            .buttonStyle(.plain)
-            .help("Crop (C)")
-            settingsButton
+            .layoutPriority(1)
+            controlBar
             if floating {
                 Button { library.quickLook = false } label: {
                     Image(systemName: "xmark").frame(width: 28, height: 28).contentShape(Rectangle())
@@ -180,15 +161,125 @@ struct PhotoView: View {
         .padding(.horizontal, 20)
         .padding(.top, 14)
         .padding(.bottom, 8)
+        .contextMenu {
+            Button("Customize Controls…") { library.showControls = true }
+            Toggle("Show Labels", isOn: $controlLabels)
+        }
     }
 
-    private var settingsButton: some View {
-        Button { withAnimation { library.showSettings.toggle() } } label: {
-            Image(systemName: "slider.horizontal.3").frame(width: 28, height: 28).contentShape(Rectangle())
-                .foregroundStyle(library.showSettings ? .primary : .secondary)
+    /// The chosen controls, in order, trailing; whatever doesn't fit goes into a trailing "»" menu.
+    private var controlBar: some View {
+        let all = controls
+        let spacing: Double = controlLabels ? 4 : 10
+        let shown = barWidth == 0 ? all.count : PhotoControl.fitting(all.map { ControlLabel.width($0.shortTitle, labels: controlLabels) },
+                                         in: Double(barWidth), spacing: spacing, overflowWidth: 28)
+        return Color.clear
+            .frame(minWidth: 28, maxWidth: .infinity, minHeight: 28, maxHeight: 28)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { barWidth = $0 }
+            .overlay(alignment: .trailing) {
+                HStack(spacing: spacing) {
+                    ForEach(all.prefix(shown)) { controlButton($0) }
+                    if shown < all.count { overflowMenu(Array(all.dropFirst(shown))) }
+                }
+                .fixedSize()
+            }
+    }
+
+    private func controlButton(_ c: PhotoControl) -> some View {
+        Button { perform(c) } label: {
+            ControlLabel(symbol: symbol(c), title: c.shortTitle, labels: controlLabels)
+                .foregroundStyle(style(c))
         }
         .buttonStyle(.plain)
-        .help("Settings (S)")
+        .disabled(!enabled(c))
+        .help(help(c))
+        .popover(isPresented: c == .history ? $showHistory : .constant(false), arrowEdge: .bottom) {
+            history.padding(14).frame(width: 300)
+        }
+    }
+
+    private func overflowMenu(_ rest: [PhotoControl]) -> some View {
+        Menu {
+            ForEach(rest) { c in
+                Button { perform(c, fromMenu: true) } label: { Label(c.title, systemImage: symbol(c)) }
+                    .disabled(!enabled(c))
+            }
+            Divider()
+            Button("Customize Controls…") { library.showControls = true }
+        } label: {
+            Image(systemName: "chevron.right.2").frame(width: 28, height: 28).contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .foregroundStyle(.secondary)
+        .help("More controls")
+    }
+
+    /// What a control does: the same functions as its keyboard shortcut and menu command.
+    private func perform(_ c: PhotoControl, fromMenu: Bool = false) {
+        let ids = library.targets(for: photo.id)
+        switch c {
+        case .level: toggleLevelTool()
+        case .crop: cropMode ? cancelCrop() : startCrop()
+        case .favorite: library.toggleFavorite(ids)
+        case .original: withAnimation(.easeOut(duration: 0.12)) { showOriginal.toggle() }
+        case .info: showInfo.toggle()
+        // From the "»" menu there's no button to hang the popover on: the folder history, this photo only.
+        case .history: if fromMenu { library.showActivity = true } else { showHistory.toggle() }
+        case .compare: compare = cycle(compare)
+        case .copy: library.copyPhotos(ids.compactMap(library.photo), kind: .asShown)
+        case .save: Task { await library.saveToOriginalsWithToast(ids) }
+        case .export: library.showExport = true
+        case .trash: library.requestDelete(ids)
+        case .photos: library.addToPhotos(ids)
+        case .undo: library.undo()
+        case .viewOptions: withAnimation { library.showSettings.toggle() }
+        }
+    }
+
+    private func enabled(_ c: PhotoControl) -> Bool {
+        switch c {
+        case .save: return !library.savable(library.targets(for: photo.id)).isEmpty
+        case .export: return !library.toExport.isEmpty
+        case .undo: return library.canUndo
+        default: return true
+        }
+    }
+
+    private func symbol(_ c: PhotoControl) -> String {
+        switch c {
+        case .favorite: return photo.favorite ? "heart.fill" : "heart"
+        case .info: return showInfo ? "info.circle.fill" : "info.circle"
+        case .original: return showOriginal ? "eye.fill" : "eye"
+        default: return c.symbol
+        }
+    }
+
+    /// Monochrome: secondary at rest, primary while on; the favorite heart stays red.
+    private func style(_ c: PhotoControl) -> AnyShapeStyle {
+        let on: Bool
+        switch c {
+        case .favorite: return photo.favorite ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary)
+        case .level: on = levelMode
+        case .crop: on = cropMode
+        case .info: on = showInfo
+        case .original: on = showOriginal
+        case .history: on = showHistory
+        case .compare: on = compare != .off
+        case .viewOptions: on = library.showSettings
+        default: on = false
+        }
+        return on ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)
+    }
+
+    private func help(_ c: PhotoControl) -> String {
+        switch c {
+        case .favorite: return photo.favorite ? "Unfavorite (F)" : "Favorite (F), also tags the file Red in Finder"
+        case .compare: return "Compare: \(compare.label) (click for \(cycle(compare).label))"
+        case .viewOptions: return "View options (S)"
+        default: return c.title + (c.shortcut.map { " (\($0))" } ?? "")
+        }
     }
 
     private var history: some View {

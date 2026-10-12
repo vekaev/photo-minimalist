@@ -48,6 +48,8 @@ struct ContentView: View {
             SettingsPanel().inspectorColumnWidth(300)
         }
         .sheet(isPresented: $library.showExport) { ExportView() }
+        // Right-click the preview's control bar, ⋯ ▸ Customize Controls…, or View ▸ Customize Controls….
+        .sheet(isPresented: $library.showControls) { CustomizeControlsView() }
         // View ▸ History (⌘Y): the folder's activity with Revert.
         .sheet(isPresented: $library.showActivity) { ActivityView(photoID: library.openedID) }
         .dropDestination(for: URL.self) { urls, _ in
@@ -326,6 +328,7 @@ struct MoreMenu: View {
         @Bindable var library = library
         Menu {
             Button("View Options  S") { withAnimation { library.showSettings.toggle() } }
+            Button("Customize Controls…") { library.showControls = true }.disabled(library.folder == nil)
             SettingsLink { Text("Settings…  ⌘,") }
             Divider()
             Button("Open folder…") { library.chooseFolder() }
@@ -554,12 +557,7 @@ struct StatusMenu: View {
         }
         Divider()
         if !library.savable(ids).isEmpty {
-            Button("Save to Original" + suffix) {
-                Task {
-                    let r = await library.saveToOriginals(ids)
-                    library.toast = r.failed.isEmpty ? "Saved \(r.saved == 1 ? "to original" : "\(r.saved) originals") (backup kept)" : "Saved \(r.saved), \(r.failed.count) failed"
-                }
-            }
+            Button("Save to Original" + suffix) { Task { await library.saveToOriginalsWithToast(ids) } }
         }
         if photos.contains(where: library.hasBackup) {
             Button("Restore Original" + suffix) { library.restoreOriginals(ids) }

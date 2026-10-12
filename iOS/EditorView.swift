@@ -108,53 +108,108 @@ struct EditorView: View {
         return preview ?? peek ?? p.appliedCorrection
     }
 
-    // MARK: Top: close, position, undo, more
+    // MARK: Top: close, position, the chosen buttons (Settings ▸ Editor buttons), settings
+
+    @AppStorage(PhotoControl.phoneKey) private var controlsRaw = PhotoControl.defaultValue(.phone)
+    @State private var barWidth: CGFloat = 0
 
     private func topBar(_ p: Photo) -> some View {
         let i = (library.navigation.firstIndex(of: p.id) ?? 0) + 1
+        let all = PhotoControl.parse(controlsRaw, on: .phone)
+        // Close, the counter and settings always stay; the chosen buttons get the rest, extras go into ⋯.
+        let counter = "\(i) / \(library.navigation.count)"
+        let counterWidth = ceil((counter as NSString).size(withAttributes: [.font: UIFont.preferredFont(forTextStyle: .footnote)]).width) + 4 + 18
+        let room = Double(barWidth) - 16 - 44 - 44 - Double(counterWidth) - 4
+        let shown = barWidth == 0 ? all.count : PhotoControl.fitting(all.map { _ in 44 }, in: room, spacing: 0, overflowWidth: 44)
         return HStack(spacing: 0) {
             iconButton("chevron.down", "Close") { library.closePhoto() }
-            Spacer()
+            Spacer(minLength: 0)
             // The position doubles as the ⓘ button (no room for another icon): date, camera, exposure, sizes.
             Button { showInfo = true } label: {
                 HStack(spacing: 4) {
-                    Text("\(i) / \(library.navigation.count)").monospacedDigit()
+                    Text(counter).monospacedDigit()
                     Image(systemName: "info.circle")
                 }
                 .font(.footnote).foregroundStyle(.secondary)
+                .lineLimit(1).fixedSize()
                 .frame(minHeight: 44).contentShape(Rectangle())
             }
             .accessibilityLabel("Info, photo \(i) of \(library.navigation.count)")
-            Spacer()
-            // Tap to flip between the original and the result (the Mac's Space).
-            Button { withAnimation(.easeOut(duration: 0.12)) { showOriginal.toggle() } } label: {
-                Image(systemName: showOriginal ? "eye.fill" : "eye")
-                    .font(.system(size: 17, weight: .medium))
-                    .frame(width: 44, height: 44).contentShape(Rectangle())
+            Spacer(minLength: 0)
+            ForEach(all.prefix(shown)) { c in
+                Button { perform(c, p) } label: {
+                    Image(systemName: symbol(c, p))
+                        .font(.system(size: 17, weight: c == .level && levelMode ? .bold : .medium))
+                        .foregroundStyle(c == .favorite && p.favorite ? AnyShapeStyle(.red) : AnyShapeStyle(.tint))
+                        .frame(width: 44, height: 44).contentShape(Rectangle())
+                }
+                .disabled(!enabled(c, p))
+                .accessibilityLabel(accessibility(c, p))
             }
-            .accessibilityLabel(showOriginal ? "Show the result" : "Show the original")
-            Button { library.toggleFavorite([p.id]) } label: {
-                Image(systemName: p.favorite ? "heart.fill" : "heart")
-                    .font(.system(size: 17, weight: .medium))
-                    .foregroundStyle(p.favorite ? AnyShapeStyle(.red) : AnyShapeStyle(.tint))
-                    .frame(width: 44, height: 44).contentShape(Rectangle())
+            if shown < all.count {
+                Menu {
+                    ForEach(all.dropFirst(shown)) { c in
+                        Button(role: c == .trash ? .destructive : nil) { perform(c, p) } label: { Label(c.title, systemImage: symbol(c, p)) }
+                            .disabled(!enabled(c, p))
+                    }
+                } label: {
+                    Image(systemName: "ellipsis").font(.system(size: 17, weight: .medium))
+                        .frame(width: 44, height: 44).contentShape(Rectangle())
+                }
+                .accessibilityLabel("More")
             }
-            .accessibilityLabel(p.favorite ? "Unfavorite" : "Favorite")
-            iconButton("arrow.uturn.backward", "Undo") { library.undo() }
-                .disabled(!library.canUndo)
-            iconButton("crop", "Crop") { cropMode ? (cropMode = false) : startCrop(p) }
-            Button { toggleLevelTool() } label: {
-                Image(systemName: "level").font(.system(size: 17, weight: levelMode ? .bold : .medium))
-                    .frame(width: 44, height: 44).contentShape(Rectangle())
-            }
-            .accessibilityLabel(levelMode ? "Close the level tool" : "Level tool")
-            // No room for a trash button: Move to Trash is in the long-press menu here and in the settings panel.
+            // Always here: the settings sheet is where the buttons above are chosen. Long-press: Move to Trash.
             iconButton("slider.horizontal.3", "Settings") { library.showSettings = true }
                 .contextMenu {
                     Button(role: .destructive) { library.requestDelete([p.id]) } label: { Label("Move to Trash", systemImage: "trash") }
                 }
         }
         .padding(.horizontal, 8)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { barWidth = $0 }
+    }
+
+    /// The same functions as the rest of the editor (and the Mac's shortcuts).
+    private func perform(_ c: PhotoControl, _ p: Photo) {
+        switch c {
+        case .level: toggleLevelTool()
+        case .crop: cropMode ? (cropMode = false) : startCrop(p)
+        case .favorite: library.toggleFavorite([p.id])
+        case .original: withAnimation(.easeOut(duration: 0.12)) { showOriginal.toggle() }
+        case .history: library.showActivity = true
+        case .copy: library.copyPhotos([p], kind: .asShown)
+        case .save: Task { await library.saveToOriginalsWithToast([p.id]) }
+        case .trash: library.requestDelete([p.id])
+        case .photos: library.addToPhotos([p.id])
+        case .undo: library.undo()
+        case .info: showInfo = true
+        case .viewOptions: library.showSettings = true
+        case .compare, .export: break   // not on iPhone (see PhotoControl.available)
+        }
+    }
+
+    private func enabled(_ c: PhotoControl, _ p: Photo) -> Bool {
+        switch c {
+        case .undo: return library.canUndo
+        case .save: return !library.savable([p.id]).isEmpty
+        default: return true
+        }
+    }
+
+    private func symbol(_ c: PhotoControl, _ p: Photo) -> String {
+        switch c {
+        case .favorite: return p.favorite ? "heart.fill" : "heart"
+        case .original: return showOriginal ? "eye.fill" : "eye"
+        default: return c.symbol
+        }
+    }
+
+    private func accessibility(_ c: PhotoControl, _ p: Photo) -> String {
+        switch c {
+        case .favorite: return p.favorite ? "Unfavorite" : "Favorite"
+        case .original: return showOriginal ? "Show the result" : "Show the original"
+        case .level: return levelMode ? "Close the level tool" : "Level tool"
+        default: return c.title
+        }
     }
 
     private func toggleLevelTool() {
@@ -686,6 +741,7 @@ private struct SettingsSheet: View {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { library.requestDelete([id]) }
                     }
                 }
+                EditorButtonsSection()
                 Section {
                     Toggle("Next photo after a decision", isOn: $library.advanceAfterDecision)
                     Toggle("Ask before deleting", isOn: $confirmDelete)
@@ -719,5 +775,46 @@ private struct SettingsSheet: View {
             }
         }
         .tint(.primary)
+    }
+}
+
+/// Settings ▸ Editor buttons: which buttons the editor's top bar shows, and in what order (Edit to reorder).
+/// Close, the counter and the settings button always stay; buttons that don't fit go into a ⋯ menu.
+private struct EditorButtonsSection: View {
+    @AppStorage(PhotoControl.phoneKey) private var raw = PhotoControl.defaultValue(.phone)
+
+    private var chosen: [PhotoControl] { PhotoControl.parse(raw, on: .phone) }
+    /// The chosen ones in their order, then the rest.
+    private var rows: [PhotoControl] { chosen + PhotoControl.all(on: .phone).filter { !chosen.contains($0) } }
+
+    var body: some View {
+        Section {
+            ForEach(rows) { c in
+                Toggle(isOn: Binding(
+                    get: { chosen.contains(c) },
+                    set: { on in
+                        var list = chosen
+                        if on { if !list.contains(c) { list.append(c) } } else { list.removeAll { $0 == c } }
+                        raw = PhotoControl.serialize(list)
+                    })) {
+                    Label(c.title, systemImage: c.symbol)
+                }
+            }
+            .onMove { from, to in
+                var order = rows
+                order.move(fromOffsets: from, toOffset: to)
+                let on = Set(chosen)
+                raw = PhotoControl.serialize(order.filter { on.contains($0) })
+            }
+            Button("Restore Defaults") { raw = PhotoControl.defaultValue(.phone) }
+        } header: {
+            HStack {
+                Text("Editor buttons")
+                Spacer()
+                EditButton().font(.footnote).textCase(nil)
+            }
+        } footer: {
+            Text("Edit to reorder. Close, the counter and Settings always stay; buttons that don't fit go into ⋯.")
+        }
     }
 }

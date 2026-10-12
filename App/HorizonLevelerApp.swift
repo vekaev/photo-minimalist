@@ -21,13 +21,7 @@ struct HorizonLevelerApp: App {
         library.copyTargets(preferOpened: library.quickLook || UserDefaults.standard.string(forKey: "viewMode") != "grid")
     }
 
-    private func saveTargets() async {
-        let ids = targets.map(\.id)
-        guard !library.savable(ids).isEmpty else { library.toast = "Level a photo first, then save it to the original"; return }
-        let r = await library.saveToOriginals(ids)
-        library.toast = r.failed.isEmpty ? (r.saved == 1 ? "Saved to original (backup kept)" : "Saved \(r.saved) originals (backups kept)")
-                                         : "Saved \(r.saved), \(r.failed.count) failed"
-    }
+    private func saveTargets() async { await library.saveToOriginalsWithToast(targets.map(\.id)) }
 
     private func photoKey(_ title: String, _ key: Character, action: @escaping () -> Void) -> some View {
         Button(title) {
@@ -110,6 +104,8 @@ struct HorizonLevelerApp: App {
             CommandGroup(after: .toolbar) {
                 Button("History") { library.showActivity = true }
                     .keyboardShortcut("y")
+                    .disabled(library.folder == nil)
+                Button("Customize Controls…") { library.showControls = true }
                     .disabled(library.folder == nil)
             }
             CommandGroup(replacing: .undoRedo) {

@@ -29,6 +29,8 @@ final class Library {
     var gridColumns = 1
     /// The settings side panel (Mac) / bottom panel (iPhone).
     var showSettings = false
+    /// Mac: the "Customize Controls" sheet for the preview's control bar.
+    var showControls = false
 
     // Settings
     /// Off by default: Vision reports ~100% confidence even when it's wrong, so detections are only suggestions.
@@ -468,6 +470,14 @@ final class Library {
         saveNow()
         analyze()
         return (saved, failed)
+    }
+
+    /// Save to original with the usual toast ("Level a photo first…" when there's nothing to save).
+    func saveToOriginalsWithToast(_ ids: [String]) async {
+        guard !savable(ids).isEmpty else { toast = "Level a photo first, then save it to the original"; return }
+        let r = await saveToOriginals(ids)
+        toast = r.failed.isEmpty ? (r.saved == 1 ? "Saved to original (backup kept)" : "Saved \(r.saved) originals (backups kept)")
+                                 : "Saved \(r.saved), \(r.failed.count) failed"
     }
 
     /// Puts the untouched file back from the backup folder.

@@ -884,8 +884,9 @@ struct PhotoView: View {
         case .downArrow where !pick.isEmpty: pick.nudge(dx: 0, dy: press.modifiers.contains(.shift) ? 5 : 0.5, within: pickFrame); return .handled
         case .leftArrow: library.step(-1); return .handled
         case .rightArrow: library.step(1); return .handled
-        case .upArrow: library.step(floating && library.gridActive ? -library.gridColumns : -1); return .handled
-        case .downArrow: library.step(floating && library.gridActive ? library.gridColumns : 1); return .handled
+        // ↑↓ move by a row whenever a grid is showing (Quick Look over the grid, or the grid next to the preview).
+        case .upArrow: library.step(library.gridActive ? -library.gridColumns : -1); return .handled
+        case .downArrow: library.step(library.gridActive ? library.gridColumns : 1); return .handled
         case .return where pick.isComplete:
             applyPick(); return .handled
         case .return where levelMode:

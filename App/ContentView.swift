@@ -761,7 +761,8 @@ private struct GridPage: View {
         .onDisappear { library.gridActive = false }
         // Moving through photos in quick look keeps the grid's selection in view.
         .onChange(of: library.openedID) { _, id in
-            if library.quickLook, let id { library.selection = [id]; scrollTarget = id }
+            // Moving through photos from the preview (or Quick Look) keeps the grid's selection in view.
+            if library.quickLook || inSidebar, let id { library.selection = [id]; scrollTarget = id }
         }
         .onChange(of: library.quickLook) { _, open in if !open { focused = true } }
         .onKeyPress { handle($0, ids) }

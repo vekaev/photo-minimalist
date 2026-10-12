@@ -103,12 +103,18 @@ struct EditorView: View {
                 cropMode = false
                 lineShift = 0
                 showStudio = false
-                if image == nil {
-                    image = await ImageCache.shared.image(for: photo.url, rawCompanion: photo.rawCompanion, maxPixel: 420)
+                // Reused from photo to photo (iPad sidebar, swipes): never keep the previous photo's image, and
+                // ignore loads that finish after moving on.
+                let url = photo.url
+                image = ImageCache.shared.cached(for: url)
+                if image == nil || (image?.width ?? 0) < 400 {
+                    let small = await ImageCache.shared.image(for: url, rawCompanion: photo.rawCompanion, maxPixel: 420)
+                    guard !Task.isCancelled, url == photo.url else { return }
+                    if let small { image = small }
                 }
-                if let sharp = await ImageCache.shared.image(for: photo.url, rawCompanion: photo.rawCompanion, maxPixel: 2400) {
-                    image = sharp
-                }
+                let sharp = await ImageCache.shared.image(for: url, rawCompanion: photo.rawCompanion, maxPixel: 2400)
+                guard !Task.isCancelled, url == photo.url else { return }
+                if let sharp { image = sharp }
                 if let image { photo.analysisAspect = CGFloat(image.width) / CGFloat(image.height) }
             }
         }

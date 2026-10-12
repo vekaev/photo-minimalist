@@ -126,12 +126,18 @@ struct PhotoView: View {
         .onChange(of: image?.width) { if let image { photo.analysisAspect = CGFloat(image.width) / CGFloat(image.height) } }
         .onKeyPress(phases: [.down, .repeat, .up]) { handle($0) }
         .task(id: photo.url) {
+            // This view is reused from photo to photo: never keep showing the previous photo's image. Start from
+            // whatever is cached for this one (thumbnail or sharp), and ignore loads that finish after moving on.
+            let url = photo.url
+            image = ImageCache.shared.cached(for: url)
             if image == nil || (image?.width ?? 0) < 400 {
-                image = await ImageCache.shared.image(for: photo.url, rawCompanion: photo.rawCompanion, maxPixel: 420) ?? image
+                let small = await ImageCache.shared.image(for: url, rawCompanion: photo.rawCompanion, maxPixel: 420)
+                guard !Task.isCancelled, url == photo.url else { return }
+                if let small { image = small }
             }
-            if let sharp = await ImageCache.shared.image(for: photo.url, rawCompanion: photo.rawCompanion, maxPixel: 3000) {
-                image = sharp
-            }
+            let sharp = await ImageCache.shared.image(for: url, rawCompanion: photo.rawCompanion, maxPixel: 3000)
+            guard !Task.isCancelled, url == photo.url, let sharp else { return }
+            image = sharp
         }
     }
 

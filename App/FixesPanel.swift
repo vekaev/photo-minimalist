@@ -9,6 +9,8 @@ struct FixesWorkspace: View {
     @Environment(Library.self) private var library
     let photo: Photo
     let image: CGImage?
+    /// The preview's zoom (shared with PhotoView, so ⌘+ / ⌘− / ⌘0 and the reset per photo work here too).
+    @Binding var zoom: PreviewZoom
 
     /// What's on screen and in the panel; stored into the photo on release.
     @State private var draft = BandFixSettings()
@@ -55,7 +57,11 @@ struct FixesWorkspace: View {
             let area = geo.size
             let aspect = image.map { CGFloat($0.width) / CGFloat($0.height) } ?? 1.5
             let w = min(area.width, area.height * aspect)
-            let frame = CGRect(x: (area.width - w) / 2, y: (area.height - w / aspect) / 2, width: w, height: w / aspect)
+            let fit = CGSize(width: w, height: w / aspect)
+            // Zoomed in (pinch, ⌥-scroll, ⌘+), the frame is bigger than the canvas; two-finger scroll pans
+            // (a plain drag still measures rows).
+            let frame = zoom.frame(fit: fit, in: area)
+            let visible = PreviewZoom.visible(frame, in: area)
             ZStack(alignment: .topLeading) {
                 if let image {
                     let before = EditedImage(image: image)
@@ -73,14 +79,20 @@ struct FixesWorkspace: View {
                     }
                     .frame(width: frame.width, height: frame.height)
                     .offset(x: frame.minX, y: frame.minY)
+                    .allowsHitTesting(false)
                 }
                 rowsShade(frame)
                 zoneLines(frame)
-                if mode == .split { splitHandle(frame) }
+                if mode == .split { splitHandle(frame, visible: visible) }
             }
-            .frame(width: area.width, height: area.height)
+            .frame(width: area.width, height: area.height, alignment: .topLeading)  // zoomed-in children are wider than the canvas: keep them anchored
+            .clipped()
             .contentShape(Rectangle())
             .coordinateSpace(name: "fixes")
+            .background { CanvasEvents { e, p in zoom.handle(e, at: p) } }
+            .onChange(of: [fit.width, fit.height, area.width, area.height], initial: true) { zoom.layout(fit: fit, area: area) }
+            .overlay(alignment: .bottomTrailing) { ZoomPill(zoom: zoom) { withAnimation(.easeOut(duration: 0.18)) { zoom.reset() } } }
+            .animation(.easeOut(duration: 0.2), value: zoom.isZoomed)
             .gesture(rowGesture(frame))
             .overlay(alignment: .top) {
                 if mode == .split {
@@ -89,8 +101,8 @@ struct FixesWorkspace: View {
                         Spacer()
                         tag("After")
                     }
-                    .frame(width: frame.width)
-                    .padding(.top, frame.minY + 8)
+                    .frame(width: visible.width)
+                    .padding(.top, visible.minY + 8)
                     .allowsHitTesting(false)
                 }
             }
@@ -159,15 +171,15 @@ struct FixesWorkspace: View {
             }
     }
 
-    private func splitHandle(_ frame: CGRect) -> some View {
+    private func splitHandle(_ frame: CGRect, visible: CGRect) -> some View {
         let x = frame.minX + splitX * frame.width
         return ZStack(alignment: .topLeading) {
-            Rectangle().fill(.white).frame(width: 2, height: frame.height).offset(x: x - 1, y: frame.minY)
+            Rectangle().fill(.white).frame(width: 2, height: visible.height).offset(x: x - 1, y: visible.minY)
                 .shadow(color: .black.opacity(0.4), radius: 1)
             Circle().fill(.white).frame(width: 26, height: 26)
                 .overlay(Image(systemName: "arrow.left.and.right").font(.system(size: 11, weight: .bold)).foregroundStyle(.black))
-                .position(x: x, y: frame.midY)
-            Rectangle().fill(Color.white.opacity(0.001)).frame(width: 24, height: frame.height).offset(x: x - 12, y: frame.minY)
+                .position(x: x, y: visible.midY)
+            Rectangle().fill(Color.white.opacity(0.001)).frame(width: 24, height: visible.height).offset(x: x - 12, y: visible.minY)
                 .onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
                 .highPriorityGesture(
                     DragGesture(minimumDistance: 0, coordinateSpace: .named("fixes"))

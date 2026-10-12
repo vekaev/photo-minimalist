@@ -31,6 +31,10 @@ final class Library {
     var showSettings = false
     /// Mac: the "Customize Controls" sheet for the preview's control bar.
     var showControls = false
+    /// Mac View menu ▸ Zoom In / Zoom Out / Fit: the preview of this window follows (the id makes repeats count).
+    struct ZoomRequest: Equatable { var command: ZoomCommand = .fit; var id = 0 }
+    var zoomRequest = ZoomRequest()
+    func requestZoom(_ c: ZoomCommand) { zoomRequest = ZoomRequest(command: c, id: zoomRequest.id + 1) }
 
     // Settings
     /// Off by default: Vision reports ~100% confidence even when it's wrong, so detections are only suggestions.
@@ -583,6 +587,13 @@ final class Library {
     var justLeveled: [String] = []
     private var justLeveledToken = 0
 
+    /// Level, and when the open photo is among them, open the level tool right away so the angle can be
+    /// fine-tuned (ruler, two points, [ ]). L, right-click ▸ Level, Photo ▸ Level and the corner chip.
+    func levelAndAdjust(_ ids: [String]) {
+        quickLevel(ids)
+        if let opened = openedID, ids.contains(opened) { levelTool = true }
+    }
+
     /// Level (decide-and-move, like L) and offer Undo for a few seconds.
     func quickLevel(_ ids: [String]) {
         guard !ids.isEmpty else { return }
@@ -649,6 +660,25 @@ final class Library {
         #endif
         saveSoon()
         if !value, filter == .favorites { removeFromList(items.map(\.id)) }
+        mirrorFavoriteInPhotos(items.map(\.url), value)
+    }
+
+    static let photosFavoriteSyncKey = "photosFavoriteSync"
+
+    /// ♥ here = ♥ in Apple Photos for copies already imported there (Settings ▸ "Mirror favorites in Apple Photos",
+    /// on by default). The first time, Photos asks for access; if it's refused, a toast says where to change it.
+    private func mirrorFavoriteInPhotos(_ urls: [URL], _ value: Bool) {
+        guard UserDefaults.standard.object(forKey: Self.photosFavoriteSyncKey) as? Bool ?? true else { return }
+        Task { [weak self] in
+            do { try await PhotosSync.setFavorite(urls, to: value) }
+            catch {
+                guard let self else { return }
+                if !UserDefaults.standard.bool(forKey: "photosFavoriteSyncWarned") {
+                    UserDefaults.standard.set(true, forKey: "photosFavoriteSyncWarned")
+                    self.toast = "Couldn't update Apple Photos: allow access in System Settings ▸ Privacy ▸ Photos"
+                }
+            }
+        }
     }
 
     // MARK: Apple Photos (only on the owner's action)

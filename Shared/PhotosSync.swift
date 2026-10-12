@@ -52,6 +52,13 @@ enum PhotosSync {
     /// capture date: one fetch over the date range, then names in memory. Only sets favorite, never clears it.
     /// Returns how many assets were matched.
     static func syncFavorites(_ urls: [URL]) async throws -> Int {
+        try await setFavorite(urls, to: true)
+    }
+
+    /// Sets (or clears) the Photos favorite on already-imported copies of these files — the ♥ in this app mirrored
+    /// as you press F. Same matching as above. Photos not in the library are left alone. Returns matches.
+    @discardableResult
+    static func setFavorite(_ urls: [URL], to value: Bool) async throws -> Int {
         try await authorize()
         let wanted = urls.map { (name: $0.lastPathComponent.lowercased(), date: captureDate($0)) }
         guard !wanted.isEmpty else { return 0 }
@@ -80,10 +87,10 @@ enum PhotosSync {
             }
             if let best, distance(best, w.date) <= 26 * 3600, !matches.contains(best) { matches.append(best) }
         }
-        let toChange = matches.filter { !$0.isFavorite }
+        let toChange = matches.filter { $0.isFavorite != value }
         if !toChange.isEmpty {
             try await PHPhotoLibrary.shared().performChanges {
-                for asset in toChange { PHAssetChangeRequest(for: asset).isFavorite = true }
+                for asset in toChange { PHAssetChangeRequest(for: asset).isFavorite = value }
             }
         }
         return matches.count

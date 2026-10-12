@@ -36,6 +36,17 @@ struct EditorView: View {
     @State private var showInfo = false
     /// Holding the corner chip: preview the leveled photo and show the suggested line.
     @State private var chipHold = false
+    /// Zoom and pan (pinch, two fingers, double-tap, iPad ⌘+ / ⌘− / ⌘0); back to fit for every photo.
+    @State private var zoom = PreviewZoom()
+    /// Two fingers are down: one-finger gestures (swipe, crop handles, picker, pan) pause.
+    @State private var pinching = false
+    @State private var pinchBase: PreviewZoom?
+    @State private var pinchPoint: CGPoint = .zero
+    /// When two fingers last came down, and when the current one-finger drag started: a drag that saw a pinch
+    /// is ignored to the end (no swipe to the next photo, no stray point, no jump when a finger lifts).
+    @State private var lastPinch = Date.distantPast
+    @State private var dragStart: Date?
+    @State private var panStart: CGSize?
     /// iPad two-pane layout (regular width): the right pane, with a sidebar button instead of Close, popovers
     /// instead of sheets and the Mac's info card over the photo. nil: the iPhone's full-screen editor.
     let pad: PadChrome?
@@ -103,6 +114,7 @@ struct EditorView: View {
                 cropMode = false
                 lineShift = 0
                 showStudio = false
+                zoom.reset()
                 // Reused from photo to photo (iPad sidebar, swipes): never keep the previous photo's image, and
                 // ignore loads that finish after moving on.
                 let url = photo.url
@@ -270,6 +282,8 @@ struct EditorView: View {
     private func keys(_ p: Photo) -> EditorKeys {
         EditorKeys(
             showOriginal: showOriginal, cropMode: cropMode, levelMode: levelMode, pickActive: !pick.isEmpty,
+            zoomed: zoom.isZoomed,
+            zoom: { c in withAnimation(.easeOut(duration: 0.15)) { zoom.apply(c) } },
             toggleOriginal: { withAnimation(.easeOut(duration: 0.12)) { showOriginal.toggle() } },
             toggleInfo: { toggleInfo() },
             toggleLevelTool: { toggleLevelTool() },
@@ -297,41 +311,44 @@ struct EditorView: View {
             let fitW = min(area.width, area.height * aspect)
             let fit = CGSize(width: fitW, height: fitW / aspect)
             // Final result only: the photo fills its frame, cropped, with no tilted edges around it.
-            let frame = CGRect(x: (area.width - fit.width) / 2, y: (area.height - fit.height) / 2, width: fit.width, height: fit.height)
+            // Zoomed in, the frame is bigger than the canvas; every overlay follows it.
+            let frame = zoom.frame(fit: fit, in: area)
+            let visible = PreviewZoom.visible(frame, in: area)
 
             ZStack(alignment: .topLeading) {
-                photoLayer(fit: fit, rotation: rotation, area: area, crop: crop)
+                photoLayer(frame: frame, rotation: rotation, area: area, crop: crop)
                 if cropMode {
-                    CropOverlay(rect: $cropDraft, ratio: normalizedCropRatio, matte: [Color(.systemBackground)])
+                    CropOverlay(rect: $cropDraft, ratio: normalizedCropRatio, matte: [Color(.systemBackground)],
+                                visible: visible.offsetBy(dx: -frame.minX, dy: -frame.minY), paused: pinching)
                         .frame(width: frame.width, height: frame.height)
                         .offset(x: frame.minX, y: frame.minY)
                 } else if !levelMode {
                     // Quiet default: just the photo, plus the corner chip for a confident tilt.
                     if chipHold, library.hasSuggestion(p), let d = p.detection {
-                        detectedLine(angle: d.angle + rotation, in: frame, draggable: false)
+                        detectedLine(angle: d.angle + rotation, in: frame, visible: visible, draggable: false)
                     }
                     if !showOriginal {
                         Color.clear
-                            .frame(width: frame.width, height: frame.height)
+                            .frame(width: visible.width, height: visible.height)
                             .overlay(alignment: .topTrailing) { chip(p).padding(8) }
-                            .offset(x: frame.minX, y: frame.minY)
+                            .offset(x: visible.minX, y: visible.minY)
                     }
                 } else {
                 LineOverlay(lines: lines)
-                    .frame(width: frame.width, height: frame.height)
-                    .offset(x: frame.minX, y: frame.minY)
+                    .frame(width: visible.width, height: visible.height)
+                    .offset(x: visible.minX, y: visible.minY)
                 // Only for a confident, undecided tilt.
                 if showDetected, library.hasSuggestion(p), let d = p.detection {
-                    detectedLine(angle: d.angle + rotation, in: frame, draggable: pick.isEmpty)
+                    detectedLine(angle: d.angle + rotation, in: frame, visible: visible, draggable: pick.isEmpty)
                 }
-                if showGuide && !showOriginal { guide(frame) }
+                if showGuide && !showOriginal { guide(frame, visible: visible) }
                 LinePickOverlay(pick: pick)
                 // Magnifiers: one above your finger while you hold, both ends once the line is picked.
                 ForEach(Array(pick.points.enumerated()), id: \.offset) { i, pt in
                     if pick.active == i || (pick.isComplete && pick.active == nil) {
                         PointLoupe(canvas: area, focus: pt, diameter: 110) {
                             ZStack(alignment: .topLeading) {
-                                photoLayer(fit: fit, rotation: rotation, area: area, crop: crop)
+                                photoLayer(frame: frame, rotation: rotation, area: area, crop: crop)
                                 LinePickOverlay(pick: pick)
                             }
                         }
@@ -341,29 +358,47 @@ struct EditorView: View {
                 }
                 }
             }
-            .frame(width: area.width, height: area.height)
+            .frame(width: area.width, height: area.height, alignment: .topLeading)  // zoomed-in children are wider than the canvas: keep them anchored
             .clipped()
             .contentShape(Rectangle())
             .coordinateSpace(name: "photo")
-            // Default view: swipes always change photos.
-            .gesture(cropMode || levelMode ? nil :
+            .modifier(zoomInput(fit: fit, area: area, frame: frame))
+            // Default view at fit: swipes always change photos.
+            .gesture(cropMode || levelMode || zoom.isZoomed ? nil :
                 DragGesture(minimumDistance: 20, coordinateSpace: .named("photo"))
+                    .onChanged { _ in if dragStart == nil { dragStart = Date() } }
                     .onEnded { v in
+                        defer { dragStart = nil }
+                        guard !dragSawPinch else { return }
                         let w = v.translation.width, h = v.translation.height
                         if abs(w) > 60 && abs(w) > abs(h) * 1.5 {
                             withAnimation(.easeOut(duration: 0.2)) { library.step(w < 0 ? 1 : -1) }
                         }
                     }
             )
+            // Zoomed in (not cropping or leveling): one finger moves the photo.
+            .gesture(cropMode || levelMode || !zoom.isZoomed ? nil :
+                DragGesture(minimumDistance: 4, coordinateSpace: .named("photo"))
+                    .onChanged { v in
+                        if dragStart == nil { dragStart = Date(); panStart = zoom.pan }
+                        guard !dragSawPinch, let s = panStart else { return }
+                        zoom.pan(to: CGSize(width: s.width + v.translation.width, height: s.height + v.translation.height))
+                    }
+                    .onEnded { _ in dragStart = nil; panStart = nil }
+            )
             .gesture(!levelMode ? nil :
                 // Touch to place a point (magnifier above the finger), drag to fine-tune, lift to set it.
                 // A quick sideways swipe that started a new point is a swipe to the next photo instead.
                 DragGesture(minimumDistance: 0, coordinateSpace: .named("photo"))
                     .onChanged { v in
+                        if dragStart == nil { dragStart = Date() }
+                        guard !dragSawPinch else { return }
                         if pick.active == nil && pick.start == nil { pick.press(at: v.startLocation, within: frame) }
                         pick.move(to: v.location, within: frame)
                     }
                     .onEnded { v in
+                        defer { dragStart = nil }
+                        if dragSawPinch { pick.cancelPress(); return }
                         let w = v.translation.width, h = v.translation.height
                         let swipe = pick.created && abs(w) > 70 && abs(w) > abs(h) * 1.8
                             && abs(v.predictedEndTranslation.width) > abs(w) * 1.3
@@ -377,6 +412,12 @@ struct EditorView: View {
             )
             .animation(.easeOut(duration: 0.15), value: pick.isComplete)
             .overlay(alignment: .bottom) { if levelMode { pickBar(p) } }
+            .overlay(alignment: .bottomTrailing) {
+                ZoomPill(zoom: zoom) { withAnimation(.easeOut(duration: 0.2)) { zoom.reset() } }
+                    // Above the "Level along this line" bar.
+                    .padding(.bottom, levelMode && !pick.isEmpty ? 50 : 0)
+            }
+            .animation(.easeOut(duration: 0.2), value: zoom.isZoomed)
             // iPad: the Mac's info card, bottom left over the photo (ⓘ or I).
             .overlay(alignment: .bottomLeading) {
                 if pad != nil && showInfo && !cropMode {
@@ -428,7 +469,7 @@ struct EditorView: View {
                 }
                 .chipStyle()
                 .frame(minHeight: 44).contentShape(Rectangle())
-                .onTapGesture { chipHold = false; peek = nil; library.quickLevel([p.id]) }
+                .onTapGesture { chipHold = false; peek = nil; library.levelAndAdjust([p.id]) }
                 .onLongPressGesture(minimumDuration: 0.25, perform: {}, onPressingChanged: { held in
                     chipHold = held
                     peek = held ? DecisionSwitch.levelTarget(p) : nil
@@ -454,12 +495,69 @@ struct EditorView: View {
         return nil
     }
 
-    private func photoLayer(fit: CGSize, rotation: Double, area: CGSize, crop: CGRect?) -> some View {
+    /// - Parameter frame: where the photo goes in the canvas (zoomed in, bigger than the canvas).
+    private func photoLayer(frame: CGRect, rotation: Double, area: CGSize, crop: CGRect?) -> some View {
         ZStack {
             if let image { EditedImage(image: image, rotation: rotation, crop: crop, fix: shownFix) }
         }
-        .frame(width: fit.width, height: fit.height)
+        .frame(width: frame.width, height: frame.height)
+        .position(x: frame.midX, y: frame.midY)
         .frame(width: area.width, height: area.height)
+        // Touches go to the canvas, never to a zoomed photo sticking out of it.
+        .allowsHitTesting(false)
+    }
+
+    // MARK: Zoom
+
+    /// The current one-finger drag saw two fingers come down (or is happening under them).
+    private var dragSawPinch: Bool { pinching || (dragStart.map { lastPinch >= $0 } ?? false) }
+
+    /// Pinch / two-finger pan, double-tap, the layout the zoom clamps to, and the picked ends following a zoom.
+    private func zoomInput(fit: CGSize, area: CGSize, frame: CGRect) -> ZoomInput {
+        ZoomInput(fit: fit, area: area, frame: frame, doubleTap: !levelMode,
+                  layout: { zoom.layout(fit: fit, area: area) },
+                  frameChanged: { old, new in pick.remap(from: old, to: new) },
+                  twoFingers: { phase, scale, point in twoFingers(phase, scale, point) },
+                  toggle: { point in withAnimation(.easeOut(duration: 0.2)) { zoom.toggle(at: point) } })
+    }
+
+    private func twoFingers(_ phase: TwoFingerZoom.Phase, _ scale: CGFloat, _ point: CGPoint) {
+        switch phase {
+        case .began:
+            pinching = true
+            lastPinch = Date()
+            pinchBase = zoom
+            pinchPoint = point
+            if levelMode, pick.active != nil { pick.cancelPress() }
+        case .changed:
+            guard let base = pinchBase else { return }
+            zoom.pinch(from: base, startPoint: pinchPoint, scale: scale, point: point)
+        case .ended:
+            pinching = false
+            pinchBase = nil
+            lastPinch = Date()
+        }
+    }
+
+    /// Grouped so the canvas's modifier chain stays short enough to type-check.
+    private struct ZoomInput: ViewModifier {
+        let fit: CGSize
+        let area: CGSize
+        let frame: CGRect
+        /// Double-tap toggles fit ⇄ 2× (not in the level tool: taps place points there, double-taps reset lines).
+        let doubleTap: Bool
+        let layout: () -> Void
+        let frameChanged: (CGRect, CGRect) -> Void
+        let twoFingers: (TwoFingerZoom.Phase, CGFloat, CGPoint) -> Void
+        let toggle: (CGPoint) -> Void
+
+        func body(content: Content) -> some View {
+            content
+                .background(TwoFingerZoom(onChange: twoFingers))
+                .simultaneousGesture(doubleTap ? SpatialTapGesture(count: 2, coordinateSpace: .named("photo")).onEnded { toggle($0.location) } : nil)
+                .onChange(of: [fit.width, fit.height, area.width, area.height], initial: true) { layout() }
+                .onChange(of: frame) { old, new in frameChanged(old, new) }
+        }
     }
 
     private var imageAspect: CGFloat { image.map { CGFloat($0.width) / CGFloat($0.height) } ?? 1.5 }
@@ -568,20 +666,23 @@ struct EditorView: View {
         }
     }
 
-    private func guide(_ frame: CGRect) -> some View {
+    private func guide(_ frame: CGRect, visible: CGRect) -> some View {
         let y = frame.minY + guideY * frame.height
         return ZStack(alignment: .topLeading) {
             Path { path in path.move(to: CGPoint(x: frame.minX, y: y)); path.addLine(to: CGPoint(x: frame.maxX, y: y)) }
                 .stroke(.black.opacity(0.45), lineWidth: 2.5)
+                .allowsHitTesting(false)
             Path { path in path.move(to: CGPoint(x: frame.minX, y: y)); path.addLine(to: CGPoint(x: frame.maxX, y: y)) }
                 .stroke(.white, lineWidth: 1)
+                .allowsHitTesting(false)
             Capsule().fill(.white).frame(width: 28, height: 6)
                 .shadow(color: .black.opacity(0.4), radius: 2)
-                .position(x: frame.maxX - 22, y: y)
-            // Generous touch target around the line.
+                .position(x: visible.maxX - 22, y: y)
+                .allowsHitTesting(false)
+            // Generous touch target around the line (the part on screen, when zoomed in).
             Rectangle().fill(Color.white.opacity(0.001))
-                .frame(width: frame.width, height: 36)
-                .offset(x: frame.minX, y: y - 18)
+                .frame(width: visible.width, height: 36)
+                .offset(x: visible.minX, y: y - 18)
                 // Only a real drag moves the guide; taps fall through to two-point leveling.
                 .highPriorityGesture(
                     DragGesture(minimumDistance: 6, coordinateSpace: .named("photo"))
@@ -594,9 +695,11 @@ struct EditorView: View {
 
     /// The dashed suggested horizon. A finger that starts a drag within the ~44 pt band along it moves it up or
     /// down (it keeps its angle); taps fall through to the two-point picker; double-tap puts it back.
-    private func detectedLine(angle: Double, in frame: CGRect, draggable: Bool) -> some View {
+    private func detectedLine(angle: Double, in frame: CGRect, visible: CGRect, draggable: Bool) -> some View {
         let r = angle * .pi / 180, len = hypot(frame.width, frame.height) / 2
         let c = CGPoint(x: frame.midX, y: frame.midY + lineShift * frame.height)
+        // The grab band sits on the line over the part on screen (the whole photo at fit).
+        let grab = CGPoint(x: visible.midX, y: c.y - tan(r) * (visible.midX - c.x))
         return ZStack(alignment: .topLeading) {
             Path { path in
                 path.move(to: CGPoint(x: c.x - cos(r) * len, y: c.y + sin(r) * len))
@@ -606,9 +709,9 @@ struct EditorView: View {
             .allowsHitTesting(false)
             if draggable {
                 Rectangle().fill(Color.white.opacity(0.001))
-                    .frame(width: frame.width / max(abs(cos(r)), 0.2), height: 44)
+                    .frame(width: visible.width / max(abs(cos(r)), 0.2), height: 44)
                     .rotationEffect(.degrees(-angle))
-                    .position(c)
+                    .position(grab)
                     .highPriorityGesture(
                         DragGesture(minimumDistance: 6, coordinateSpace: .named("photo"))
                             .onChanged { g in
@@ -781,6 +884,7 @@ private struct SettingsSheet: View {
     @Environment(Library.self) private var library
     @AppStorage("ios.thumbFill") private var thumbFill = true
     @AppStorage(Library.confirmDeleteKey) private var confirmDelete = true
+    @AppStorage(Library.photosFavoriteSyncKey) private var mirrorFavorites = true
     @AppStorage(AppAppearance.key) private var appearance: AppAppearance = .system
     let photo: Photo
     @Binding var lines: Lines
@@ -837,6 +941,7 @@ private struct SettingsSheet: View {
                 Section {
                     Toggle("Next photo after a decision", isOn: $library.advanceAfterDecision)
                     Toggle("Ask before deleting", isOn: $confirmDelete)
+                    Toggle("Mirror favorites in Apple Photos", isOn: $mirrorFavorites)
                     Toggle("Pair RAW + JPEG", isOn: $library.pairRaw)
                     Toggle("Reopen the last folder at launch", isOn: $library.reopenLastFolder)
                 } header: {

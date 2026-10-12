@@ -128,8 +128,14 @@ struct CropOverlay: View {
     @Binding var rect: CGRect
     let ratio: CGFloat?
     var matte: [Color] = [.black]
+    /// The part of the overlay that's on screen, in its own coordinates (zoomed in, the frame is bigger than the
+    /// canvas): only there does it take the pointer / touches. nil = all of it.
+    var visible: CGRect? = nil
+    /// Two fingers came down (pinch to zoom): put the frame back where this drag started and ignore the rest of it.
+    var paused = false
 
     @State private var start: CGRect?
+    @State private var ignoring = false
     @State private var zone: Zone?
     @State private var hovering = false
     @State private var lingering = false
@@ -171,8 +177,20 @@ struct CropOverlay: View {
                 .stroke(.white, style: StrokeStyle(lineWidth: 3, lineCap: .square))
                 .opacity(active ? 1 : 0.35)
             }
+            .allowsHitTesting(false)
+            .overlay(alignment: .topLeading) {
+                // The hit area: only the visible part, so a zoomed-in frame can't take clicks outside the canvas.
+                let v = visible ?? CGRect(origin: .zero, size: s)
+                Rectangle().fill(Color.white.opacity(0.001))
+                    .frame(width: max(v.width, 0), height: max(v.height, 0))
+                    .offset(x: v.minX, y: v.minY)
+            }
             .animation(.easeOut(duration: 0.2), value: active)
-            .contentShape(Rectangle())
+            .onChange(of: paused) { _, on in
+                guard on, start != nil else { return }
+                if let s = start { rect = s }
+                ignoring = true
+            }
             #if os(macOS)
             .onContinuousHover { phase in
                 if case .active = phase { hovering = true } else { hovering = false }
@@ -183,6 +201,7 @@ struct CropOverlay: View {
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { g in
+                        guard !ignoring, !paused else { return }
                         if start == nil {
                             start = rect; zone = hit(g.startLocation, r)
                             #if os(macOS)
@@ -200,7 +219,7 @@ struct CropOverlay: View {
                         lingering = true
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { if start == nil { lingering = false } }
                         #endif
-                        start = nil; zone = nil
+                        start = nil; zone = nil; ignoring = false
                     }
             )
         }

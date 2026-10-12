@@ -16,6 +16,10 @@ struct EditorKeys {
     var cropMode = false
     var levelMode = false
     var pickActive = false
+    /// The photo is zoomed in (Fit is available).
+    var zoomed = false
+    /// ⌘+ / ⌘− / ⌘0.
+    var zoom: (ZoomCommand) -> Void = { _ in }
     var toggleOriginal: () -> Void = {}
     var toggleInfo: () -> Void = {}
     var toggleLevelTool: () -> Void = {}
@@ -86,7 +90,7 @@ struct PadCommands: Commands {
                 .keyboardShortcut("i", modifiers: [])
                 .disabled(p == nil || editor == nil)
             Divider()
-            Button("Level") { if let p { library?.quickLevel([p.id]) } }
+            Button("Level") { if let p { library?.levelAndAdjust([p.id]) } }
                 .keyboardShortcut("l", modifiers: []).disabled(p == nil)
             Button("Keep as Shot") { if let p { library?.decideAndMove([p.id], .keep) } }
                 .keyboardShortcut("k", modifiers: []).disabled(p == nil)
@@ -94,6 +98,14 @@ struct PadCommands: Commands {
                 .keyboardShortcut("u", modifiers: []).disabled(p == nil)
             Button(p?.favorite == true ? "Unfavorite" : "Favorite") { if let p { library?.toggleFavorite([p.id]) } }
                 .keyboardShortcut("f", modifiers: []).disabled(p == nil)
+            Divider()
+            // Zoom (also pinch, two fingers to pan, double-tap fit ⇄ 2×).
+            Button("Zoom In") { editor?.zoom(.zoomIn) }
+                .keyboardShortcut("+").disabled(p == nil || editor == nil)
+            Button("Zoom Out") { editor?.zoom(.zoomOut) }
+                .keyboardShortcut("-").disabled(p == nil || editor == nil || !(editor?.zoomed ?? false))
+            Button("Fit") { editor?.zoom(.fit) }
+                .keyboardShortcut("0").disabled(p == nil || editor == nil || !(editor?.zoomed ?? false))
             Divider()
             Button(editor?.levelMode == true ? "Close Level Tool" : "Level Tool") { editor?.toggleLevelTool() }
                 .keyboardShortcut("r", modifiers: []).disabled(p == nil || editor == nil)

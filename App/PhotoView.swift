@@ -27,6 +27,8 @@ struct PhotoView: View {
     @AppStorage("horizontalOnly") private var horizontalOnly = true
     @AppStorage("showSuggestion") private var showDetected = true
     @AppStorage("showGuide") private var showGuide = true
+    /// The guide line in the normal (quiet) preview too, not only in the level tool. Right-click ▸ Guide Line.
+    @AppStorage("guideInPreview") private var guideInPreview = false
     @AppStorage("showLoupes") private var showLoupes = true
     @AppStorage("compareMode") private var compare: CompareMode = .off
     @AppStorage("overlayOpacity") private var overlayOpacity = 0.5
@@ -60,6 +62,10 @@ struct PhotoView: View {
     @State private var showHistory = false
     /// The pointer is on the corner chip: preview the leveled photo and show the suggested line.
     @State private var chipHover = false
+    /// Zoom and pan of the photo (pinch, ⌥-scroll, ⌘+ / ⌘− / ⌘0); back to fit for every new photo.
+    @State private var zoom = PreviewZoom()
+    /// Where the pan was when a plain drag on the zoomed photo started (browse mode).
+    @State private var panStart: CGSize?
     /// The info card (I) over the photo, bottom-left; stays on from photo to photo.
     @AppStorage("showInfo") private var showInfo = false
     @FocusState private var focused: Bool
@@ -84,7 +90,7 @@ struct PhotoView: View {
         VStack(spacing: 0) {
             topRow
             if fixesMode {
-                FixesWorkspace(photo: photo, image: image)
+                FixesWorkspace(photo: photo, image: image, zoom: $zoom)
             } else {
             Group {
                 if compare == .sideBySide && !showOriginal {
@@ -112,10 +118,7 @@ struct PhotoView: View {
         .focusable()
         .focusEffectDisabled()
         .focused($focused)
-        .onAppear { focused = true }
-        .onChange(of: photo.id) { pick.clear(); preview = nil; peek = nil; chipHover = false; showOriginal = false; cropMode = false; lineShift = 0; showStudio = false; focused = true }
-        .onChange(of: library.levelTool) { if !library.levelTool { pick.clear(); preview = nil; peek = nil } }
-        .onChange(of: library.fixesTool) { if library.fixesTool { pick.clear(); peek = nil; chipHover = false; showOriginal = false; if cropMode { cancelCrop() } } }
+        .modifier(lifecycle)
         .sheet(isPresented: $showStudio) {
             CropStudio(photo: photo, image: image, onChoose: { v in
                 library.chooseCropVersion(photo.id, v.id)
@@ -138,6 +141,60 @@ struct PhotoView: View {
             let sharp = await ImageCache.shared.image(for: url, rawCompanion: photo.rawCompanion, maxPixel: 3000)
             guard !Task.isCancelled, url == photo.url, let sharp else { return }
             image = sharp
+        }
+    }
+
+    /// Focus, per-photo resets and zoom requests (split out of `body` so the compiler can type-check it).
+    private var lifecycle: Lifecycle {
+        Lifecycle(
+            photoID: photo.id, levelTool: library.levelTool, fixesTool: library.fixesTool, cropMode: cropMode,
+            showSettings: library.showSettings, zoomRequest: library.zoomRequest,
+            focus: { focused = true },
+            photoChanged: {
+                pick.clear(); preview = nil; peek = nil; chipHover = false; showOriginal = false; cropMode = false
+                lineShift = 0; showStudio = false; zoom.reset(); focused = true
+            },
+            levelToolChanged: { on in
+                focused = true
+                if !on { pick.clear(); preview = nil; peek = nil }
+            },
+            fixesToolChanged: { on in
+                focused = true
+                if on { pick.clear(); peek = nil; chipHover = false; showOriginal = false; if cropMode { cancelCrop() } }
+            },
+            // View ▸ Zoom In / Zoom Out / Fit. The pane under quick look leaves them to the floating card.
+            zoom: { c in
+                guard floating || !library.quickLook else { return }
+                withAnimation(.easeOut(duration: 0.15)) { zoom.apply(c) }
+            })
+    }
+
+    private struct Lifecycle: ViewModifier {
+        let photoID: String
+        let levelTool: Bool
+        let fixesTool: Bool
+        let cropMode: Bool
+        let showSettings: Bool
+        let zoomRequest: Library.ZoomRequest
+        let focus: () -> Void
+        let photoChanged: () -> Void
+        let levelToolChanged: (Bool) -> Void
+        let fixesToolChanged: (Bool) -> Void
+        let zoom: (ZoomCommand) -> Void
+
+        func body(content: Content) -> some View {
+            content
+                .onAppear { focus() }
+                // Keys ([ ] nudge, arrows, Space, ↵/Esc…) only reach this view while it has focus. Clicking a control
+                // (ruler, the As shot | Leveled switch, Done, a toggle in the View panel) takes focus away, so take it
+                // back after any click in the preview and whenever a tool opens or closes.
+                .simultaneousGesture(TapGesture().onEnded { focus() })
+                .onChange(of: levelTool) { _, on in levelToolChanged(on) }
+                .onChange(of: fixesTool) { _, on in fixesToolChanged(on) }
+                .onChange(of: cropMode) { focus() }
+                .onChange(of: showSettings) { focus() }
+                .onChange(of: photoID) { photoChanged() }
+                .onChange(of: zoomRequest) { _, r in zoom(r.command) }
         }
     }
 
@@ -367,7 +424,7 @@ struct PhotoView: View {
             StraightenRuler(
                 value: preview ?? (photo.decision == .level ? photo.correction : 0),
                 onChange: { preview = $0 },
-                onCommit: { v in library.setCorrection(photo.id, v); preview = nil }
+                onCommit: { v in library.setCorrection(photo.id, v); preview = nil; focused = true }
             )
             Text("Click both ends of the horizon (hold to magnify, drag to fine-tune, ↵ to level) · [ ] ±0.1° · ⇧[ ⇧] ±1° · Space: original ⇄ result · ↵ / Esc done")
                 .font(.caption2).foregroundStyle(.tertiary)
@@ -397,20 +454,20 @@ struct PhotoView: View {
         return CGSize(width: w, height: w / aspect)
     }
 
-    private func centered(_ s: CGSize, in area: CGSize) -> CGRect {
-        CGRect(x: (area.width - s.width) / 2, y: (area.height - s.height) / 2, width: s.width, height: s.height)
-    }
-
     /// The photo at a rotation, centered in a canvas of `area`.
     /// The photo as it will be saved: rotated, then cropped to fill its frame, so there are never tilted
     /// edges or a dimmed background around it.
     /// - Parameter fixed: with the photo's film scan fix (off for "before" / original layers).
-    private func photoLayer(_ fit: CGSize, rotation: Double, area: CGSize, crop: CGRect? = nil, fixed: Bool = true) -> some View {
+    /// - Parameter frame: where the photo goes in the canvas (zoomed in, bigger than the canvas).
+    private func photoLayer(_ frame: CGRect, rotation: Double, area: CGSize, crop: CGRect? = nil, fixed: Bool = true) -> some View {
         ZStack {
             if let image { EditedImage(image: image, rotation: rotation, crop: crop, fix: fixed && !showOriginal ? photo.bandFixSource : nil) }
         }
-        .frame(width: fit.width, height: fit.height)
+        .frame(width: frame.width, height: frame.height)
+        .position(x: frame.midX, y: frame.midY)
         .frame(width: area.width, height: area.height)
+        // Clicks go to the canvas (its content shape), never to a zoomed photo sticking out of it.
+        .allowsHitTesting(false)
     }
 
     /// The crop shown in the main pane: the saved crop, except while editing the crop or viewing the original.
@@ -424,80 +481,100 @@ struct PhotoView: View {
             let crop = interactive ? displayCrop : nil
             let fit = fitted(aspect: Geometry.finalAspect(imageAspect, crop: crop), in: area)
             let originalFit = fitted(aspect: imageAspect, in: area)
-            let scale = Geometry.cropScale(width: fit.width, height: fit.height, degrees: rotation)
-            let _ = scale
-            let frame = centered(fit, in: area)
+            // Zoomed in, the photo's frame is bigger than the canvas and every overlay follows it.
+            let frame = zoom.frame(fit: fit, in: area)
+            let originalFrame = zoom.frame(fit: originalFit, in: area)
+            let visible = PreviewZoom.visible(frame, in: area)
             let guidePoint = frame.minY + guideY * frame.height
             let comparing = interactive && !showOriginal
 
             ZStack(alignment: .topLeading) {
-                photoLayer(fit, rotation: rotation, area: area, crop: crop, fixed: interactive)
+                photoLayer(frame, rotation: rotation, area: area, crop: crop, fixed: interactive)
 
                 if comparing && !cropMode && compare == .overlay {
-                    photoLayer(originalFit, rotation: 0, area: area, fixed: false).opacity(overlayOpacity)
+                    photoLayer(originalFrame, rotation: 0, area: area, fixed: false).opacity(overlayOpacity)
                 }
                 if comparing && !cropMode && compare == .split {
-                    photoLayer(originalFit, rotation: 0, area: area, fixed: false)
+                    photoLayer(originalFrame, rotation: 0, area: area, fixed: false)
                         .mask(alignment: .leading) { Rectangle().frame(width: splitX * area.width) }
                 }
 
                 // Fine lines / thirds are a leveling and cropping aid: not on the quiet default view.
                 if levelMode || cropMode {
+                    // Over the visible part only: the lines are a screen aid (every 8 pt), not part of the photo.
                     GridOverlay(mode: gridMode, horizontalOnly: horizontalOnly)
-                        .frame(width: frame.width, height: frame.height)
-                        .offset(x: frame.minX, y: frame.minY)
+                        .frame(width: visible.width, height: visible.height)
+                        .offset(x: visible.minX, y: visible.minY)
+                        .allowsHitTesting(false)
                 }
 
                 // Only for a confident, undecided tilt, and only in the level tool or while hovering the chip.
                 if library.hasSuggestion(photo), !showOriginal, (levelMode && showDetected) || chipHover, let d = photo.detection {
                     HorizonLine(degrees: d.angle + rotation)
-                        .frame(width: fit.width, height: fit.height)
-                        .offset(x: (area.width - fit.width) / 2, y: (area.height - fit.height) / 2 + lineShift * fit.height)
-                    if interactive && levelMode && pick.isEmpty { suggestionGrab(degrees: d.angle + rotation, frame: frame) }
+                        .frame(width: frame.width, height: frame.height)
+                        .offset(x: frame.minX, y: frame.minY + lineShift * frame.height)
+                    if interactive && levelMode && pick.isEmpty { suggestionGrab(degrees: d.angle + rotation, frame: frame, visible: visible) }
                 }
 
                 if interactive && cropMode {
-                    CropOverlay(rect: $cropDraft, ratio: normalizedCropRatio, matte: [Theme.ground, Theme.raised.opacity(0.5)])
+                    CropOverlay(rect: $cropDraft, ratio: normalizedCropRatio, matte: [Theme.ground, Theme.raised.opacity(0.5)],
+                                visible: visible.offsetBy(dx: -frame.minX, dy: -frame.minY))
                         .frame(width: frame.width, height: frame.height)
                         .offset(x: frame.minX, y: frame.minY)
                 } else if interactive {
                     if comparing && compare == .split { splitHandle(area: area) }
                     if levelMode {
-                        if showGuide { guideLine(frame: frame, y: guidePoint) }
-                        pickLayer(fit: fit, rotation: rotation, area: area)
+                        if showGuide { guideLine(frame: frame, visible: visible, y: guidePoint) }
+                        pickLayer(frame: frame, rotation: rotation, area: area)
                     } else if !showOriginal {
-                        // The corner chip, top-right inside the photo.
+                        if guideInPreview { guideLine(frame: frame, visible: visible, y: guidePoint) }
+                        // The corner chip, top-right inside the photo (of the part on screen, when zoomed in).
                         Color.clear
-                            .frame(width: frame.width, height: frame.height)
+                            .frame(width: visible.width, height: visible.height)
                             .overlay(alignment: .topTrailing) { chip.padding(10) }
-                            .offset(x: frame.minX, y: frame.minY)
+                            .offset(x: visible.minX, y: visible.minY)
                     }
                 }
             }
-            .frame(width: area.width, height: area.height)
+            .frame(width: area.width, height: area.height, alignment: .topLeading)  // zoomed-in children are wider than the canvas: keep them anchored
             .clipped()
             .contentShape(Rectangle())
             .coordinateSpace(name: "canvas")
+            // Pinch, ⌥-scroll, two-finger scroll, smart zoom, ⌥-double-click (CanvasEvents.swift).
+            .background { if interactive { CanvasEvents { e, p in canvasEvent(e, p) } } }
+            .onChange(of: [fit.width, fit.height, area.width, area.height], initial: true) {
+                if interactive { zoom.layout(fit: fit, area: area) }
+            }
             // Right-click the photo: the same menu as in the list (decide, ♥, copy, save, trash, fixes…),
             // for this photo or the whole selection.
             .contextMenu {
-                if interactive && !cropMode && !fixesMode { StatusMenu(ids: library.targets(for: photo.id)) }
+                if interactive && !cropMode && !fixesMode {
+                    StatusMenu(ids: library.targets(for: photo.id))
+                    Divider()
+                    Toggle("Guide Line", isOn: levelMode ? $showGuide : $guideInPreview)
+                }
             }
             .gesture(interactive && levelMode ? pickGesture(photo: frame) : nil)
+            // Zoomed in, a plain drag on the photo moves it (not in the level tool, crop or Fixes: those use the drag).
+            .gesture(interactive && !levelMode && !cropMode && zoom.isZoomed ? panGesture : nil)
             .onContinuousHover(coordinateSpace: .named("canvas")) { phase in
                 guard interactive, levelMode, pick.points.count == 1, pick.active == nil else { if pick.hover != nil { pick.hover = nil }; return }
                 if case .active(let p) = phase, frame.contains(p) { pick.hover = p } else { pick.hover = nil }
             }
-            .onChange(of: frame) { pickFrame = frame }
+            .onChange(of: frame) { old, new in
+                pickFrame = new
+                // The picked ends stay on the same spot of the photo while zooming and panning.
+                if interactive { pick.remap(from: old, to: new) }
+            }
             .onAppear { pickFrame = frame }
             .animation(.easeOut(duration: 0.15), value: pick.isComplete)
             .overlay(alignment: .bottom) { if interactive && levelMode { pickBar } }
             .overlay(alignment: guideY > 0.62 ? .top : .bottom) {
                 if interactive && levelMode && showGuide && showLoupes && image != nil {
                     HStack {
-                        loupe(fit: fit, rotation: rotation, area: area, focus: CGPoint(x: frame.minX + frame.width * 0.06, y: guidePoint), label: "Left end")
+                        loupe(frame: frame, rotation: rotation, area: area, focus: CGPoint(x: visible.minX + visible.width * 0.06, y: guidePoint), label: "Left end")
                         Spacer()
-                        loupe(fit: fit, rotation: rotation, area: area, focus: CGPoint(x: frame.maxX - frame.width * 0.06, y: guidePoint), label: "Right end")
+                        loupe(frame: frame, rotation: rotation, area: area, focus: CGPoint(x: visible.maxX - visible.width * 0.06, y: guidePoint), label: "Right end")
                     }
                     .padding(10)
                     .allowsHitTesting(false)
@@ -513,6 +590,10 @@ struct PhotoView: View {
                         .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 4)).padding(10)
                 }
             }
+            .overlay(alignment: .bottomTrailing) {
+                if interactive { ZoomPill(zoom: zoom) { withAnimation(.easeOut(duration: 0.18)) { zoom.reset() } } }
+            }
+            .animation(.easeOut(duration: 0.2), value: zoom.isZoomed)
         }
         .background(Theme.raised.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
     }
@@ -543,7 +624,7 @@ struct PhotoView: View {
                 }
                 .chipStyle()
             } else if library.hasSuggestion(photo), let d = photo.detection {
-                Button { chipHover = false; peek = nil; library.quickLevel(library.targets(for: photo.id)) } label: {
+                Button { chipHover = false; peek = nil; library.levelAndAdjust(library.targets(for: photo.id)) } label: {
                     HStack(spacing: 6) {
                         Text("Tilted " + Geometry.format(d.angle)).monospacedDigit()
                         Text("·").opacity(0.5)
@@ -582,21 +663,24 @@ struct PhotoView: View {
 
     private static let guideColor = Color.white
 
-    private func guideLine(frame: CGRect, y: CGFloat) -> some View {
+    private func guideLine(frame: CGRect, visible: CGRect, y: CGFloat) -> some View {
         ZStack(alignment: .topLeading) {
-            Path { p in p.move(to: CGPoint(x: frame.minX, y: y)); p.addLine(to: CGPoint(x: frame.maxX, y: y)) }
-                .stroke(.black.opacity(0.6), lineWidth: 3)
-            Path { p in p.move(to: CGPoint(x: frame.minX, y: y)); p.addLine(to: CGPoint(x: frame.maxX, y: y)) }
-                .stroke(Self.guideColor, lineWidth: 1)
-            ForEach([frame.minX, frame.maxX], id: \.self) { x in
-                Circle().fill(Self.guideColor).frame(width: 12, height: 12)
-                    .overlay(Circle().stroke(.black.opacity(0.6)))
-                    .position(x: x, y: y)
+            ZStack(alignment: .topLeading) {
+                Path { p in p.move(to: CGPoint(x: frame.minX, y: y)); p.addLine(to: CGPoint(x: frame.maxX, y: y)) }
+                    .stroke(.black.opacity(0.6), lineWidth: 3)
+                Path { p in p.move(to: CGPoint(x: frame.minX, y: y)); p.addLine(to: CGPoint(x: frame.maxX, y: y)) }
+                    .stroke(Self.guideColor, lineWidth: 1)
+                ForEach([frame.minX, frame.maxX], id: \.self) { x in
+                    Circle().fill(Self.guideColor).frame(width: 12, height: 12)
+                        .overlay(Circle().stroke(.black.opacity(0.6)))
+                        .position(x: x, y: y)
+                }
             }
-            // Wide invisible strip so the line is easy to grab.
+            .allowsHitTesting(false)
+            // Wide invisible strip so the line is easy to grab (the part on screen, when zoomed in).
             Rectangle().fill(Color.white.opacity(0.001))
-                .frame(width: frame.width, height: 16)
-                .offset(x: frame.minX, y: y - 8)
+                .frame(width: visible.width, height: 16)
+                .offset(x: visible.minX, y: y - 8)
                 .onHover { inside in if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() } }
                 .gesture(
                     DragGesture(minimumDistance: 0, coordinateSpace: .named("canvas"))
@@ -612,12 +696,15 @@ struct PhotoView: View {
 
     /// A thin invisible band (±6 pt) along the dashed suggested horizon: ↕ pointer, drag to move it up or down
     /// at its angle, double-click to put it back. Clicks elsewhere still go to the two-point picker.
-    private func suggestionGrab(degrees: Double, frame: CGRect) -> some View {
+    private func suggestionGrab(degrees: Double, frame: CGRect, visible: CGRect) -> some View {
         let r = degrees * .pi / 180
+        // Along the line, over the part of the photo on screen (the whole photo at fit).
+        let x = visible.midX
+        let y = frame.midY + lineShift * frame.height - tan(r) * (x - frame.midX)
         return Rectangle().fill(Color.white.opacity(0.001))
-            .frame(width: frame.width / max(abs(cos(r)), 0.2), height: 12)
+            .frame(width: visible.width / max(abs(cos(r)), 0.2), height: 12)
             .rotationEffect(.degrees(-degrees))
-            .position(x: frame.midX, y: frame.midY + lineShift * frame.height)
+            .position(x: x, y: y)
             .onHover { inside in if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() } }
             .gesture(
                 DragGesture(minimumDistance: 0, coordinateSpace: .named("canvas"))
@@ -633,10 +720,10 @@ struct PhotoView: View {
             .help("Drag the suggested horizon onto the real one · double-click to reset")
     }
 
-    private func loupe(fit: CGSize, rotation: Double, area: CGSize, focus: CGPoint, label: String) -> some View {
+    private func loupe(frame: CGRect, rotation: Double, area: CGSize, focus: CGPoint, label: String) -> some View {
         let size = CGSize(width: 200, height: 120)
         let zoom: CGFloat = 5
-        return photoLayer(fit, rotation: rotation, area: area, crop: displayCrop)
+        return photoLayer(frame, rotation: rotation, area: area, crop: displayCrop)
             .scaleEffect(zoom, anchor: UnitPoint(x: focus.x / max(area.width, 1), y: focus.y / max(area.height, 1)))
             .offset(x: size.width / 2 - focus.x, y: size.height / 2 - focus.y)
             .frame(width: size.width, height: size.height, alignment: .topLeading)
@@ -683,6 +770,30 @@ struct PhotoView: View {
 
     // MARK: Picking the horizon (two points, Apple Notes–style magnifiers)
 
+    /// Zoomed in (browse mode): drag the photo around.
+    private var panGesture: some Gesture {
+        DragGesture(minimumDistance: 2)
+            .onChanged { g in
+                if panStart == nil { panStart = zoom.pan; NSCursor.closedHand.push() }
+                let s = panStart ?? zoom.pan
+                zoom.pan(to: CGSize(width: s.width + g.translation.width, height: s.height + g.translation.height))
+            }
+            .onEnded { _ in
+                if panStart != nil { NSCursor.pop() }
+                panStart = nil
+            }
+    }
+
+    /// Zoom input from the canvas (CanvasEvents): pinch, scroll, smart zoom, ⌥-double-click, ⌘=.
+    private func canvasEvent(_ e: NSEvent, _ p: CGPoint) -> Bool {
+        // The pane under quick look leaves events to the floating card; the crop studio sheet has its own window.
+        guard floating || !library.quickLook, !showStudio else { return false }
+        let used = zoom.handle(e, at: p)
+        // A consumed ⌥-click never reaches the tap that takes focus back.
+        if used, e.type == .leftMouseDown { focused = true }
+        return used
+    }
+
     /// Press to place a point (a magnifier follows while held), press again for the other end,
     /// drag either end to fine-tune, then ↵ to level along the line. Esc cancels.
     private func pickGesture(photo frame: CGRect) -> some Gesture {
@@ -695,12 +806,12 @@ struct PhotoView: View {
     }
 
     /// The picked line, its magnifiers, and the confirm bar.
-    @ViewBuilder private func pickLayer(fit: CGSize, rotation: Double, area: CGSize) -> some View {
+    @ViewBuilder private func pickLayer(frame: CGRect, rotation: Double, area: CGSize) -> some View {
         LinePickOverlay(pick: pick)
         if pick.points.count == 1, pick.active == nil, let h = pick.hover {
             PointLoupe(canvas: area, focus: h) {
                 ZStack(alignment: .topLeading) {
-                    photoLayer(fit, rotation: rotation, area: area, crop: displayCrop)
+                    photoLayer(frame, rotation: rotation, area: area, crop: displayCrop)
                     LinePickOverlay(pick: pick)
                 }
             }
@@ -710,7 +821,7 @@ struct PhotoView: View {
             if pick.active == i || (pick.isComplete && pick.active == nil) {
                 PointLoupe(canvas: area, focus: pt) {
                     ZStack(alignment: .topLeading) {
-                        photoLayer(fit, rotation: rotation, area: area, crop: displayCrop)
+                        photoLayer(frame, rotation: rotation, area: area, crop: displayCrop)
                         LinePickOverlay(pick: pick)
                     }
                 }
@@ -908,7 +1019,7 @@ struct PhotoView: View {
         let repeatable: Set<String> = ["[", "]", "{", "}"]
         if press.phase == .repeat && !repeatable.contains(press.characters) { return .handled }
         switch press.characters {
-        case "l", "L": library.quickLevel(library.targets(for: photo.id))
+        case "l", "L": library.levelAndAdjust(library.targets(for: photo.id))
         case "k", "K": decide(.keep)
         case "u", "U": decide(.undecided)
         case "f", "F": library.toggleFavorite(library.targets(for: photo.id))
@@ -919,7 +1030,7 @@ struct PhotoView: View {
         case "r", "R": toggleLevelTool()
         case "0": library.resetToOriginal([photo.id])
         case "g", "G": gridMode = cycle(gridMode)
-        case "t", "T": showGuide.toggle()
+        case "t", "T": if levelMode { showGuide.toggle() } else { guideInPreview.toggle() }
         case "c": startCrop()
         case "C": if photo.cropVersions.isEmpty { startCrop() } else { showStudio = true }
         case "h", "H": showDetected.toggle()

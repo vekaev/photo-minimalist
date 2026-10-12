@@ -102,6 +102,18 @@ struct HorizonLevelerApp: App {
                 .keyboardShortcut(.delete, modifiers: .command)
             }
             CommandGroup(after: .toolbar) {
+                // The preview's zoom (also pinch, ⌥-scroll, ⌥-double-click; ⌘= works like ⌘+). No ⌘1 for
+                // actual pixels: ⌘1…9 switch tabs.
+                Button("Zoom In") { library.requestZoom(.zoomIn) }
+                    .keyboardShortcut("+")
+                    .disabled(library.folder == nil)
+                Button("Zoom Out") { library.requestZoom(.zoomOut) }
+                    .keyboardShortcut("-")
+                    .disabled(library.folder == nil)
+                Button("Fit") { library.requestZoom(.fit) }
+                    .keyboardShortcut("0")
+                    .disabled(library.folder == nil)
+                Divider()
                 Button("History") { library.showActivity = true }
                     .keyboardShortcut("y")
                     .disabled(library.folder == nil)
@@ -116,7 +128,7 @@ struct HorizonLevelerApp: App {
             CommandMenu("Photo") {
                 photoKey("Favorite", "f") { library.toggleFavorite(targets.map(\.id)) }
                 Divider()
-                photoKey("Level", "l") { library.quickLevel(targets.map(\.id)) }
+                photoKey("Level", "l") { library.levelAndAdjust(targets.map(\.id)) }
                 photoKey("Keep as Shot", "k") { library.decideAndMove(targets.map(\.id), .keep) }
                 photoKey("Undecided", "u") { library.decideAndMove(targets.map(\.id), .undecided) }
                 Divider()

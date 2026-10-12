@@ -551,7 +551,7 @@ struct StatusMenu: View {
 
     var body: some View {
         let suffix = ids.count > 1 ? " \(ids.count) photos" : ""
-        Button("Level" + suffix) { library.decideAndMove(ids, .level) }
+        Button("Level" + suffix) { library.levelAndAdjust(ids) }
         Button("Keep as shot" + suffix) { library.decideAndMove(ids, .keep) }
         Button("Undecided" + suffix) { library.decideAndMove(ids, .undecided) }
         Divider()

@@ -20,6 +20,7 @@ private struct GeneralPreferences: View {
     @AppStorage("cardAction") private var cardAction: CardAction = .ask
     @AppStorage("pairRaw") private var pairRaw = true
     @AppStorage(Library.confirmDeleteKey) private var confirmDelete = true
+    @AppStorage(Library.photosFavoriteSyncKey) private var mirrorFavorites = true
     @AppStorage(AppAppearance.key) private var appearance: AppAppearance = .system
 
     var body: some View {
@@ -33,8 +34,9 @@ private struct GeneralPreferences: View {
             Section {
                 Toggle("Show RAW + JPEG pairs as one photo", isOn: $pairRaw)
                 Toggle("Ask before moving photos to the Trash", isOn: $confirmDelete)
+                Toggle("Mirror favorites in Apple Photos", isOn: $mirrorFavorites)
             } footer: {
-                Text("A pair like DSCF0015.JPG + .RAF shows the JPEG with a RAF mark; decisions and deletes apply to both. ⌘Z puts deleted photos back.")
+                Text("A pair like DSCF0015.JPG + .RAF shows the JPEG with a RAF mark; decisions and deletes apply to both. ⌘Z puts deleted photos back. Mirror favorites: ♥ here also hearts (or un-hearts) the same photo in Apple Photos when it's already imported there.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             // Low importance, so last.

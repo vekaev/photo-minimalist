@@ -14,15 +14,24 @@ struct ExportView: View {
     @State private var running = false
     @State private var finished = false
     @State private var task: Task<Void, Never>?
+    @AppStorage("exportMode") private var replace = false
 
     var body: some View {
         let items = library.toExport
         VStack(alignment: .leading, spacing: 20) {
-            Text("Export leveled photos").font(.title2.weight(.semibold))
-            Text("\(items.count) photos marked Level will be rotated and cropped to the largest rectangle with the original aspect ratio. Kept and undecided photos are skipped. Originals are never modified.")
+            Text(replace ? "Save into originals" : "Export leveled photos").font(.title2.weight(.semibold))
+            Picker("", selection: $replace) {
+                Text("New copies").tag(false)
+                Text("Replace originals").tag(true)
+            }
+            .pickerStyle(.segmented).labelsHidden().disabled(running)
+            Text(replace
+                 ? "\(library.savable(items.map(\.id)).count) photos will be rotated and cropped in place (JPEG, HEIC, TIFF; RAW files can't be rewritten and stay as shot). The untouched files are kept in a hidden backup folder, so “Restore Original” always works."
+                 : "\(items.count) photos marked Level will be rotated and cropped to the largest rectangle with the original aspect ratio, as new files. Kept and undecided photos are skipped. Originals are never modified.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
+            if !replace {
             Form {
                 Picker("Format", selection: $format) {
                     ForEach(ExportFormat.allCases) { Text($0.label).tag($0) }
@@ -49,11 +58,13 @@ struct ExportView: View {
             }
             .formStyle(.grouped)
             .disabled(running)
+            }
 
             if running || finished {
                 VStack(alignment: .leading, spacing: 6) {
                     ProgressView(value: Double(done), total: Double(max(items.count, 1)))
-                    Text(finished ? "Done: \(done - failures.count) exported, \(failures.count) failed" : "Exporting \(done) / \(items.count)")
+                    Text(finished ? "Done: \(done - failures.count) \(replace ? "saved" : "exported"), \(failures.count) failed"
+                                  : "\(replace ? "Saving" : "Exporting") \(done) / \(items.count)")
                         .font(.callout).monospacedDigit()
                     if !failures.isEmpty {
                         ScrollView { Text(failures.joined(separator: "\n")).font(.caption.monospaced()).frame(maxWidth: .infinity, alignment: .leading) }
@@ -63,18 +74,22 @@ struct ExportView: View {
             }
 
             HStack {
-                if finished, let d = destinationURL {
+                if finished, !replace, let d = destinationURL {
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([d]) }
                 }
+                PhotosMenu().fixedSize().disabled(running)
+                    .help("Adds the original files to Apple Photos (RAW as the alternate); favorites stay favorites")
                 Spacer()
                 Button(running ? "Stop" : "Close") {
                     if running { task?.cancel() } else { dismiss() }
                 }
                 .keyboardShortcut(.cancelAction)
-                Button("Export \(items.count) photos") { start(items) }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(running || items.isEmpty || destinationURL == nil)
+                Button(replace ? "Replace \(library.savable(items.map(\.id)).count) originals" : "Export \(items.count) photos") {
+                    replace ? startReplace(items) : start(items)
+                }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+                .disabled(running || items.isEmpty || (!replace && destinationURL == nil))
             }
         }
         .padding(24)
@@ -94,9 +109,21 @@ struct ExportView: View {
         if panel.runModal() == .OK { destination = panel.url }
     }
 
+    private func startReplace(_ items: [Photo]) {
+        let ids = items.map(\.id)
+        done = 0; failures = []; running = true; finished = false
+        task = Task {
+            let result = await library.saveToOriginals(ids) { i, _ in done = i }
+            failures = result.failed
+            done = result.saved + result.failed.count
+            running = false
+            finished = true
+        }
+    }
+
     private func start(_ items: [Photo]) {
         guard let dest = destinationURL else { return }
-        let jobs = items.map { (id: $0.id, url: $0.url, degrees: $0.correction) }
+        let jobs = items.map { (id: $0.id, url: $0.url, degrees: $0.correction, crop: $0.crop) }
         let format = format, quality = quality, writeLog = writeLog
         done = 0; failures = []; running = true; finished = false
 
@@ -104,6 +131,7 @@ struct ExportView: View {
             try? FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
             FileManager.default.createFile(atPath: dest.appendingPathComponent(ImageLoader.exportMarker).path, contents: nil)
             var log = "file,correction_deg,output\n"
+            var exported: [String] = []
             await withTaskGroup(of: (String, Double, String?, String?).self) { group in
                 var next = 0
                 func add() {
@@ -111,7 +139,7 @@ struct ExportView: View {
                     group.addTask(priority: .userInitiated) {
                         let out = dest.appendingPathComponent(job.id).deletingPathExtension().appendingPathExtension(format.fileExtension)
                         do {
-                            try Renderer.export(source: job.url, degrees: job.degrees, to: out, format: format, quality: quality)
+                            try Renderer.export(source: job.url, degrees: job.degrees, crop: job.crop, to: out, format: format, quality: quality)
                             return (job.id, job.degrees, out.lastPathComponent, nil)
                         } catch {
                             return (job.id, job.degrees, nil, error.localizedDescription)
@@ -121,7 +149,7 @@ struct ExportView: View {
                 for _ in 0..<min(4, jobs.count) { add() }
                 for await (id, degrees, output, error) in group {
                     done += 1
-                    if let error { failures.append("\(id): \(error)") }
+                    if let error { failures.append("\(id): \(error)") } else { exported.append(id) }
                     log += "\"\(id)\",\(String(format: "%.2f", degrees)),\(output.map { "\"\($0)\"" } ?? "")\n"
                     if Task.isCancelled { group.cancelAll(); break }
                     if next < jobs.count { add() }
@@ -130,6 +158,7 @@ struct ExportView: View {
             if writeLog {
                 try? log.write(to: dest.appendingPathComponent("horizon-leveler-log.csv"), atomically: true, encoding: .utf8)
             }
+            library.noteExport(exported, to: dest)
             running = false
             finished = true
         }

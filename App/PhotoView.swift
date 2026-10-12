@@ -14,117 +14,260 @@ enum CompareMode: String, CaseIterable, Identifiable {
     }
 }
 
+/// The large preview on the right: by default just the photo. A confident tilt shows as a small corner chip
+/// ("Tilted 1.4° · Level"); everything else about leveling lives in the level tool (R), like crop (C).
+/// Nothing is applied until you press L (or Level).
 struct PhotoView: View {
     @Environment(Library.self) private var library
     let photo: Photo
+    /// Shown as the floating quick-look card.
+    var floating = false
 
     @AppStorage("gridMode") private var gridMode: GridMode = .fine
     @AppStorage("horizontalOnly") private var horizontalOnly = true
-    @AppStorage("showDetected") private var showDetected = false
+    @AppStorage("showSuggestion") private var showDetected = true
     @AppStorage("showGuide") private var showGuide = true
     @AppStorage("showLoupes") private var showLoupes = true
     @AppStorage("compareMode") private var compare: CompareMode = .off
     @AppStorage("overlayOpacity") private var overlayOpacity = 0.5
 
     @State private var image: CGImage?
+
+    init(photo: Photo, floating: Bool = false) {
+        self.photo = photo
+        self.floating = floating
+        // Open with the picture that's already loaded (no blank first frame), then sharpen.
+        _image = State(initialValue: ImageCache.shared.cached(for: photo.url))
+    }
     @State private var showOriginal = false
     @State private var preview: Double?
-    @State private var drawStart: CGPoint?
-    @State private var drawEnd: CGPoint?
-    @State private var firstPoint: CGPoint?
+    /// Hovering a side of the As shot | Level switch shows that result before deciding.
+    @State private var peek: Double?
+    @State private var pick = LinePick()
+    @State private var pickFrame: CGRect = .infinite
+    // Crop mode
+    @State private var cropMode = false
+    @State private var cropDraft = CropMath.full
+    @AppStorage("cropRatio") private var cropRatio: CropRatio = .original
+    @State private var cropPortrait = false
     @State private var guideY: CGFloat = 0.5
+    /// The dashed suggested horizon, dragged up or down (fraction of the photo's height). Reset per photo.
+    @State private var lineShift: CGFloat = 0
+    @State private var lineDragStart: CGFloat?
+    /// Crop studio: all versions side by side (⇧C).
+    @State private var showStudio = false
     @State private var splitX: CGFloat = 0.5
+    @State private var showHistory = false
+    /// The pointer is on the corner chip: preview the leveled photo and show the suggested line.
+    @State private var chipHover = false
+    /// The info card (I) over the photo, bottom-left; stays on from photo to photo.
+    @AppStorage("showInfo") private var showInfo = false
     @FocusState private var focused: Bool
+
+    /// The level tool is open (it stays open from photo to photo until Done / Esc).
+    private var levelMode: Bool { library.levelTool && !cropMode }
 
     /// Rotation currently on screen (counter-clockwise positive).
     private var shown: Double {
         if showOriginal { return 0 }
         if let preview { return preview }
+        if let peek { return peek }
         return photo.appliedCorrection
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            topBar
-            viewBar
-            HStack(spacing: 0) {
-                VStack(spacing: 10) {
-                    if compare == .sideBySide && !showOriginal {
-                        HStack(spacing: 10) {
-                            pane(rotation: 0, interactive: false, caption: "Before")
-                            pane(rotation: shown, interactive: true, caption: "After")
-                        }
-                    } else {
-                        pane(rotation: shown, interactive: true, caption: nil)
+            topRow
+            Group {
+                if compare == .sideBySide && !showOriginal {
+                    HStack(spacing: 10) {
+                        pane(rotation: 0, interactive: false, caption: "Before")
+                        pane(rotation: shown, interactive: true, caption: "After")
                     }
-                    StraightenRuler(
-                        value: preview ?? photo.correction,
-                        onChange: { preview = $0 },
-                        onCommit: { v in library.setCorrection(photo.id, v); preview = nil }
-                    )
-                    keyLegend
+                } else {
+                    pane(rotation: shown, interactive: true, caption: nil)
                 }
-                .padding(14)
-                sidePanel
             }
+            .padding(.horizontal, 20)
+            .overlay(alignment: .bottomLeading) {
+                if showInfo && !cropMode { InfoOverlay(photo: photo).padding(.leading, 20).allowsHitTesting(false) }
+            }
+            if cropMode {
+                CropVersionStrip(photo: photo, image: image, draft: cropDraft,
+                                 onAdd: addVersion, onLoad: loadVersion, onCompare: { showStudio = true })
+                    .padding(.horizontal, 20).padding(.top, 10)
+                cropBar
+            } else if levelMode { bottom }
         }
+        .background(Theme.ground)
         .focusable()
         .focusEffectDisabled()
         .focused($focused)
         .onAppear { focused = true }
-        .onChange(of: photo.id) { firstPoint = nil; guideY = 0.5 }
+        .onChange(of: photo.id) { pick.clear(); preview = nil; peek = nil; chipHover = false; showOriginal = false; cropMode = false; lineShift = 0; showStudio = false; focused = true }
+        .onChange(of: library.levelTool) { if !library.levelTool { pick.clear(); preview = nil; peek = nil } }
+        .sheet(isPresented: $showStudio) {
+            CropStudio(photo: photo, image: image, onChoose: { v in
+                library.chooseCropVersion(photo.id, v.id)
+                showStudio = false
+                withAnimation(.easeOut(duration: 0.15)) { cropMode = false }
+            }, onClose: { showStudio = false })
+        }
+        .onChange(of: image?.width) { if let image { photo.analysisAspect = CGFloat(image.width) / CGFloat(image.height) } }
         .onKeyPress(phases: [.down, .repeat, .up]) { handle($0) }
         .task(id: photo.url) {
-            image = await ImageCache.shared.image(for: photo.url, maxPixel: 420)
-            image = await ImageCache.shared.image(for: photo.url, maxPixel: 3000)
+            if image == nil || (image?.width ?? 0) < 400 {
+                image = await ImageCache.shared.image(for: photo.url, rawCompanion: photo.rawCompanion, maxPixel: 420) ?? image
+            }
+            if let sharp = await ImageCache.shared.image(for: photo.url, rawCompanion: photo.rawCompanion, maxPixel: 3000) {
+                image = sharp
+            }
         }
     }
 
-    // MARK: Bars
+    // MARK: Top row: name, position, history, view options
 
-    private var topBar: some View {
+    private var topRow: some View {
         let position = (library.navigation.firstIndex(of: photo.id) ?? 0) + 1
-        return HStack(spacing: 12) {
-            Button { library.closePhoto() } label: { Image(systemName: "square.grid.2x2") }
-                .help("Back to grid (Esc)")
-            VStack(alignment: .leading, spacing: 1) {
-                Text(photo.name).font(.headline).lineLimit(1).truncationMode(.middle)
-                Text("\(position) of \(library.navigation.count)").font(.caption).foregroundStyle(.secondary).monospacedDigit()
+        return HStack(spacing: 10) {
+            Text(photo.name).font(.callout.weight(.medium)).lineLimit(1).truncationMode(.middle)
+            Text("\(position) / \(library.navigation.count)").font(.callout).foregroundStyle(.tertiary).monospacedDigit()
+            // Decided photos say so quietly: "Leveled −1.3°", "Cropped 4:5", "Kept as shot".
+            if photo.decision != .undecided {
+                Text(library.note(for: photo)).font(.callout).foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
             }
-            Spacer(minLength: 8)
-            Button { library.step(-1) } label: { Image(systemName: "chevron.left") }.help("Previous (←)")
-            Button { library.step(1) } label: { Image(systemName: "chevron.right") }.help("Next (→)")
+            Spacer()
+            Button { library.toggleFavorite(library.targets(for: photo.id)) } label: {
+                Image(systemName: photo.favorite ? "heart.fill" : "heart").frame(width: 28, height: 28).contentShape(Rectangle())
+                    .foregroundStyle(photo.favorite ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+            }
+            .buttonStyle(.plain)
+            .help(photo.favorite ? "Unfavorite (F)" : "Favorite (F), also tags the file Red in Finder")
+            Button { showHistory.toggle() } label: {
+                Image(systemName: "clock.arrow.circlepath").frame(width: 28, height: 28).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("History")
+            .popover(isPresented: $showHistory, arrowEdge: .bottom) { history.padding(14).frame(width: 300) }
+            Button { showInfo.toggle() } label: {
+                Image(systemName: showInfo ? "info.circle.fill" : "info.circle").frame(width: 28, height: 28).contentShape(Rectangle())
+                    .foregroundStyle(showInfo ? .primary : .secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Info (I)")
+            Button { toggleLevelTool() } label: {
+                Image(systemName: "level").frame(width: 28, height: 28).contentShape(Rectangle())
+                    .foregroundStyle(levelMode ? .primary : .secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Level (R)")
+            Button { cropMode ? cancelCrop() : startCrop() } label: {
+                Image(systemName: "crop").frame(width: 28, height: 28).contentShape(Rectangle())
+                    .foregroundStyle(cropMode ? .primary : .secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Crop (C)")
+            settingsButton
+            if floating {
+                Button { library.quickLook = false } label: {
+                    Image(systemName: "xmark").frame(width: 28, height: 28).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Close (Space or Esc)")
+            }
         }
-        .padding(.horizontal, 14).padding(.vertical, 8)
-        .background(Theme.panel)
+        .foregroundStyle(.primary)
+        .padding(.horizontal, 20)
+        .padding(.top, 14)
+        .padding(.bottom, 8)
     }
 
-    private var viewBar: some View {
-        FlowRow(spacing: 14) {
-            Picker("Lines", selection: $gridMode) {
-                ForEach(GridMode.allCases) { Text($0.label).tag($0) }
-            }
-            .pickerStyle(.segmented).fixedSize().help("Line density (G)")
-            Toggle("Horizontal only", isOn: $horizontalOnly).fixedSize()
-            Toggle("Guide", isOn: $showGuide).fixedSize().help("A line you drag onto the horizon (T)")
-            Toggle("Loupes", isOn: $showLoupes).fixedSize().help("Magnify both ends of the guide line")
-            Toggle("Detected", isOn: $showDetected).fixedSize().help("Show the detected horizon (H)")
-            HStack(spacing: 8) {
-                Picker("Compare", selection: $compare) {
-                    ForEach(CompareMode.allCases) { Text($0.label).tag($0) }
-                }
-                .pickerStyle(.segmented).fixedSize().help("Before / after (C)")
-                if compare == .overlay {
-                    Slider(value: $overlayOpacity, in: 0...1).frame(width: 90).help("How much of the original shows through")
-                }
-            }
+    private var settingsButton: some View {
+        Button { withAnimation { library.showSettings.toggle() } } label: {
+            Image(systemName: "slider.horizontal.3").frame(width: 28, height: 28).contentShape(Rectangle())
+                .foregroundStyle(library.showSettings ? .primary : .secondary)
         }
-        .toggleStyle(.checkbox)
-        .font(.callout)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 14).padding(.vertical, 7)
-        .background(Theme.panel)
-        .overlay(alignment: .bottom) { Theme.line.frame(height: 1) }
+        .buttonStyle(.plain)
+        .help("Settings (S)")
+    }
+
+    private var history: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("History").font(.headline)
+            Text("Click a step to go back to it. Originals are never modified.")
+                .font(.caption).foregroundStyle(.secondary)
+            VStack(spacing: 2) {
+                ForEach(Array(photo.history.enumerated()), id: \.offset) { i, step in
+                    Button { library.jump(photo.id, to: i) } label: {
+                        HStack {
+                            Text(step.label)
+                            Spacer()
+                            Text(step.date, style: .time).foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 8).padding(.vertical, 5)
+                        .foregroundStyle(i > photo.index ? .secondary : .primary)
+                        .background(i == photo.index ? Theme.raised : .clear, in: RoundedRectangle(cornerRadius: 5))
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            Divider()
+            Button("Show all activity…") { showHistory = false; library.showActivity = true }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("The folder's history, with Revert (⌘Y)")
+        }
+    }
+
+    // MARK: Level tool: the headline, As shot | Leveled, the ruler
+
+    private var headline: String {
+        if let preview { return Geometry.format(preview) }
+        if let peek { return peek == 0 ? "Preview · as shot" : "Preview · leveled " + Geometry.format(peek) }
+        return library.note(for: photo)
+    }
+
+    private var bottom: some View {
+        VStack(spacing: 12) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(headline).font(.system(size: 20, weight: .medium)).monospacedDigit()
+                    Text(subline).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                DecisionSwitch(photo: photo, decide: { decide($0) }, peek: { peek = $0 })
+                Button { closeLevelTool() } label: {
+                    Text("Done").fontWeight(.semibold).padding(.horizontal, 16).frame(height: 30)
+                        .foregroundStyle(Theme.ground).background(Color.primary, in: Capsule())
+                }
+                .help("Close the level tool (↵ or Esc)")
+            }
+            .buttonStyle(.plain)
+            StraightenRuler(
+                value: preview ?? (photo.decision == .level ? photo.correction : 0),
+                onChange: { preview = $0 },
+                onCommit: { v in library.setCorrection(photo.id, v); preview = nil }
+            )
+            Text("Click both ends of the horizon (hold to magnify, drag to fine-tune, ↵ to level) · [ ] ±0.1° · ⇧[ ⇧] ±1° · Space: original ⇄ result · ↵ / Esc done")
+                .font(.caption2).foregroundStyle(.tertiary)
+                .lineLimit(1).minimumScaleFactor(0.8)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 12)
+        .padding(.bottom, 14)
+    }
+
+    private var subline: String {
+        switch photo.decision {
+        case .level: return "Showing the leveled photo · K shows it as shot · U clears the decision · adjust below"
+        case .keep: return "Showing it as shot, unchanged · hover Level to preview · L levels it"
+        case .undecided:
+            if library.hasSuggestion(photo) { return "Showing it as shot · dashed line = suggested horizon · hover Level to preview, L applies it" }
+            if photo.analyzed { return "Click both ends of the horizon to level it yourself." }
+            if photo.detection == nil && photo.analyzed { return "Click both ends of the horizon to level it yourself." }
+            return "Press K to keep it, or level it yourself below."
+        }
     }
 
     // MARK: Canvas
@@ -139,78 +282,92 @@ struct PhotoView: View {
     }
 
     /// The photo at a rotation, centered in a canvas of `area`.
-    private func photoLayer(_ fit: CGSize, rotation: Double, area: CGSize) -> some View {
+    /// The photo as it will be saved: rotated, then cropped to fill its frame, so there are never tilted
+    /// edges or a dimmed background around it.
+    private func photoLayer(_ fit: CGSize, rotation: Double, area: CGSize, crop: CGRect? = nil) -> some View {
         ZStack {
-            if let image {
-                Image(decorative: image, scale: 1)
-                    .resizable()
-                    .interpolation(.high)
-                    .frame(width: fit.width, height: fit.height)
-                    .rotationEffect(.degrees(-rotation))
-            }
+            if let image { EditedImage(image: image, rotation: rotation, crop: crop) }
         }
+        .frame(width: fit.width, height: fit.height)
         .frame(width: area.width, height: area.height)
     }
+
+    /// The crop shown in the main pane: the saved crop, except while editing the crop or viewing the original.
+    private var displayCrop: CGRect? { cropMode || showOriginal ? nil : photo.appliedCrop }
+
+    private var imageAspect: CGFloat { image.map { CGFloat($0.width) / CGFloat($0.height) } ?? 1.5 }
 
     private func pane(rotation: Double, interactive: Bool, caption: String?) -> some View {
         GeometryReader { geo in
             let area = geo.size
-            let aspect = image.map { CGFloat($0.width) / CGFloat($0.height) } ?? 1.5
-            let fit = fitted(aspect: aspect, in: area)
+            let crop = interactive ? displayCrop : nil
+            let fit = fitted(aspect: Geometry.finalAspect(imageAspect, crop: crop), in: area)
+            let originalFit = fitted(aspect: imageAspect, in: area)
             let scale = Geometry.cropScale(width: fit.width, height: fit.height, degrees: rotation)
-            let cropping = rotation != 0
-            let frame = centered(cropping ? CGSize(width: fit.width * scale, height: fit.height * scale) : fit, in: area)
+            let _ = scale
+            let frame = centered(fit, in: area)
             let guidePoint = frame.minY + guideY * frame.height
             let comparing = interactive && !showOriginal
 
             ZStack(alignment: .topLeading) {
-                photoLayer(fit, rotation: rotation, area: area)
+                photoLayer(fit, rotation: rotation, area: area, crop: crop)
 
-                if comparing && compare == .overlay {
-                    photoLayer(fit, rotation: 0, area: area).opacity(overlayOpacity)
+                if comparing && !cropMode && compare == .overlay {
+                    photoLayer(originalFit, rotation: 0, area: area).opacity(overlayOpacity)
                 }
-                if comparing && compare == .split {
-                    photoLayer(fit, rotation: 0, area: area)
+                if comparing && !cropMode && compare == .split {
+                    photoLayer(originalFit, rotation: 0, area: area)
                         .mask(alignment: .leading) { Rectangle().frame(width: splitX * area.width) }
                 }
 
-                if cropping {
-                    Path { p in
-                        p.addRect(CGRect(origin: .zero, size: area))
-                        p.addRect(frame)
-                    }
-                    .fill(Theme.ground.opacity(0.75), style: FillStyle(eoFill: true))
-                    .allowsHitTesting(false)
-                    Rectangle().stroke(.white.opacity(0.8), lineWidth: 1)
+                // Fine lines / thirds are a leveling and cropping aid: not on the quiet default view.
+                if levelMode || cropMode {
+                    GridOverlay(mode: gridMode, horizontalOnly: horizontalOnly)
                         .frame(width: frame.width, height: frame.height)
                         .offset(x: frame.minX, y: frame.minY)
-                        .allowsHitTesting(false)
                 }
 
-                GridOverlay(mode: gridMode, horizontalOnly: horizontalOnly)
-                    .frame(width: frame.width, height: frame.height)
-                    .offset(x: frame.minX, y: frame.minY)
-
-                if showDetected, let d = photo.detection {
+                // Only for a confident, undecided tilt, and only in the level tool or while hovering the chip.
+                if library.hasSuggestion(photo), !showOriginal, (levelMode && showDetected) || chipHover, let d = photo.detection {
                     HorizonLine(degrees: d.angle + rotation)
                         .frame(width: fit.width, height: fit.height)
-                        .offset(x: (area.width - fit.width) / 2, y: (area.height - fit.height) / 2)
+                        .offset(x: (area.width - fit.width) / 2, y: (area.height - fit.height) / 2 + lineShift * fit.height)
+                    if interactive && levelMode && pick.isEmpty { suggestionGrab(degrees: d.angle + rotation, frame: frame) }
                 }
 
-                if interactive {
+                if interactive && cropMode {
+                    CropOverlay(rect: $cropDraft, ratio: normalizedCropRatio, matte: [Theme.ground, Theme.raised.opacity(0.5)])
+                        .frame(width: frame.width, height: frame.height)
+                        .offset(x: frame.minX, y: frame.minY)
+                } else if interactive {
                     if comparing && compare == .split { splitHandle(area: area) }
-                    if showGuide { guideLine(frame: frame, y: guidePoint) }
-                    drawingLayer
+                    if levelMode {
+                        if showGuide { guideLine(frame: frame, y: guidePoint) }
+                        pickLayer(fit: fit, rotation: rotation, area: area)
+                    } else if !showOriginal {
+                        // The corner chip, top-right inside the photo.
+                        Color.clear
+                            .frame(width: frame.width, height: frame.height)
+                            .overlay(alignment: .topTrailing) { chip.padding(10) }
+                            .offset(x: frame.minX, y: frame.minY)
+                    }
                 }
             }
             .frame(width: area.width, height: area.height)
             .clipped()
             .contentShape(Rectangle())
             .coordinateSpace(name: "canvas")
-            .gesture(interactive ? drawGesture : nil)
-            .simultaneousGesture(interactive ? SpatialTapGesture(coordinateSpace: .named("canvas")).onEnded { tap($0.location) } : nil)
+            .gesture(interactive && levelMode ? pickGesture(photo: frame) : nil)
+            .onContinuousHover(coordinateSpace: .named("canvas")) { phase in
+                guard interactive, levelMode, pick.points.count == 1, pick.active == nil else { if pick.hover != nil { pick.hover = nil }; return }
+                if case .active(let p) = phase, frame.contains(p) { pick.hover = p } else { pick.hover = nil }
+            }
+            .onChange(of: frame) { pickFrame = frame }
+            .onAppear { pickFrame = frame }
+            .animation(.easeOut(duration: 0.15), value: pick.isComplete)
+            .overlay(alignment: .bottom) { if interactive && levelMode { pickBar } }
             .overlay(alignment: guideY > 0.62 ? .top : .bottom) {
-                if interactive && showGuide && showLoupes && image != nil {
+                if interactive && levelMode && showGuide && showLoupes && image != nil {
                     HStack {
                         loupe(fit: fit, rotation: rotation, area: area, focus: CGPoint(x: frame.minX + frame.width * 0.06, y: guidePoint), label: "Left end")
                         Spacer()
@@ -221,8 +378,7 @@ struct PhotoView: View {
                 }
             }
             .overlay(alignment: .top) {
-                if showOriginal { badge("Original", .white) }
-                else if photo.decision == .keep && interactive { badge("Kept as shot: won't be leveled. Press L to level it.", Theme.keep) }
+                if showOriginal { badge(floating ? "Original" : "Original · Space for the result", .white) }
                 else if let caption { badge(caption, .white) }
             }
             .overlay(alignment: .topTrailing) {
@@ -232,7 +388,7 @@ struct PhotoView: View {
                 }
             }
         }
-        .background(Color.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+        .background(Theme.raised.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
     }
 
     private func badge(_ text: String, _ color: Color) -> some View {
@@ -245,9 +401,59 @@ struct PhotoView: View {
             .allowsHitTesting(false)
     }
 
+    // MARK: Corner chip
+
+    /// "Tilted 1.4° · Level L" for a confident tilt (hover previews, click or L levels), then "Leveled · Undo"
+    /// for ~4 s. Nothing at all otherwise.
+    @ViewBuilder private var chip: some View {
+        Group {
+            if library.justLeveled.contains(photo.id) {
+                HStack(spacing: 6) {
+                    Text(library.justLeveled.count == 1 ? "Leveled" : "Leveled \(library.justLeveled.count)")
+                    Text("·").opacity(0.5)
+                    Button { library.undoQuickLevel() } label: { Text("Undo").fontWeight(.semibold) }
+                        .buttonStyle(.plain)
+                        .help("Back to undecided")
+                }
+                .chipStyle()
+            } else if library.hasSuggestion(photo), let d = photo.detection {
+                Button { chipHover = false; peek = nil; library.quickLevel(library.targets(for: photo.id)) } label: {
+                    HStack(spacing: 6) {
+                        Text("Tilted " + Geometry.format(d.angle)).monospacedDigit()
+                        Text("·").opacity(0.5)
+                        Text("Level").fontWeight(.semibold)
+                        Text("L").opacity(0.5)
+                    }
+                    .chipStyle()
+                }
+                .buttonStyle(.plain)
+                .onHover { inside in
+                    chipHover = inside
+                    peek = inside ? DecisionSwitch.levelTarget(photo) : nil
+                }
+                .help("Hover to preview · click or L to level · K keeps it as shot")
+            }
+        }
+        .transition(.opacity)
+        .animation(.easeOut(duration: 0.25), value: library.justLeveled)
+    }
+
+    private func toggleLevelTool() { library.levelTool ? closeLevelTool() : openLevelTool() }
+
+    private func openLevelTool() {
+        if cropMode { cancelCrop() }
+        chipHover = false; peek = nil
+        withAnimation(.easeOut(duration: 0.15)) { library.levelTool = true }
+    }
+
+    private func closeLevelTool() {
+        pick.clear()
+        withAnimation(.easeOut(duration: 0.15)) { library.levelTool = false }
+    }
+
     // MARK: Guide line and loupes
 
-    private static let guideColor = Color(red: 0.31, green: 0.82, blue: 1.0)
+    private static let guideColor = Color.white
 
     private func guideLine(frame: CGRect, y: CGFloat) -> some View {
         ZStack(alignment: .topLeading) {
@@ -268,15 +474,42 @@ struct PhotoView: View {
                 .gesture(
                     DragGesture(minimumDistance: 0, coordinateSpace: .named("canvas"))
                         .onChanged { g in guideY = min(max((g.location.y - frame.minY) / frame.height, 0.02), 0.98) }
+                        .onEnded { g in
+                            // Double-click: back to the middle.
+                            if abs(g.translation.height) < 2, (NSApp.currentEvent?.clickCount ?? 1) >= 2 { guideY = 0.5 }
+                        }
                 )
                 .help("Drag onto the horizon")
         }
     }
 
+    /// A thin invisible band (±6 pt) along the dashed suggested horizon: ↕ pointer, drag to move it up or down
+    /// at its angle, double-click to put it back. Clicks elsewhere still go to the two-point picker.
+    private func suggestionGrab(degrees: Double, frame: CGRect) -> some View {
+        let r = degrees * .pi / 180
+        return Rectangle().fill(Color.white.opacity(0.001))
+            .frame(width: frame.width / max(abs(cos(r)), 0.2), height: 12)
+            .rotationEffect(.degrees(-degrees))
+            .position(x: frame.midX, y: frame.midY + lineShift * frame.height)
+            .onHover { inside in if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() } }
+            .gesture(
+                DragGesture(minimumDistance: 0, coordinateSpace: .named("canvas"))
+                    .onChanged { g in
+                        if lineDragStart == nil { lineDragStart = lineShift }
+                        lineShift = min(max((lineDragStart ?? 0) + g.translation.height / max(frame.height, 1), -0.5), 0.5)
+                    }
+                    .onEnded { g in
+                        lineDragStart = nil
+                        if abs(g.translation.height) < 2, (NSApp.currentEvent?.clickCount ?? 1) >= 2 { lineShift = 0 }
+                    }
+            )
+            .help("Drag the suggested horizon onto the real one · double-click to reset")
+    }
+
     private func loupe(fit: CGSize, rotation: Double, area: CGSize, focus: CGPoint, label: String) -> some View {
         let size = CGSize(width: 200, height: 120)
         let zoom: CGFloat = 5
-        return photoLayer(fit, rotation: rotation, area: area)
+        return photoLayer(fit, rotation: rotation, area: area, crop: displayCrop)
             .scaleEffect(zoom, anchor: UnitPoint(x: focus.x / max(area.width, 1), y: focus.y / max(area.height, 1)))
             .offset(x: size.width / 2 - focus.x, y: size.height / 2 - focus.y)
             .frame(width: size.width, height: size.height, alignment: .topLeading)
@@ -321,43 +554,78 @@ struct PhotoView: View {
         }
     }
 
-    // MARK: Drawing a line or clicking two points
+    // MARK: Picking the horizon (two points, Apple Notes–style magnifiers)
 
-    @ViewBuilder private var drawingLayer: some View {
-        if let a = drawStart, let b = drawEnd {
-            Path { p in p.move(to: a); p.addLine(to: b) }.stroke(Theme.accent, lineWidth: 2)
-            hint("Level this line · " + Geometry.format(-Geometry.lineTilt(from: a, to: b)), at: b)
-        }
-        if let a = firstPoint {
-            Circle().stroke(Theme.accent, lineWidth: 2).frame(width: 14, height: 14).position(a)
-            Circle().fill(Theme.accent).frame(width: 4, height: 4).position(a)
-            hint("Now click a second point on the horizon · Esc to cancel", at: a)
-        }
-    }
-
-    private func hint(_ text: String, at p: CGPoint) -> some View {
-        Text(text).font(.caption).padding(6)
-            .background(.black.opacity(0.8), in: RoundedRectangle(cornerRadius: 4))
-            .fixedSize()
-            .position(x: p.x, y: p.y - 22)
-            .allowsHitTesting(false)
-    }
-
-    private var drawGesture: some Gesture {
-        DragGesture(minimumDistance: 8, coordinateSpace: .named("canvas"))
-            .onChanged { v in firstPoint = nil; drawStart = v.startLocation; drawEnd = v.location }
-            .onEnded { v in
-                level(from: v.startLocation, to: v.location, label: "Drawn line")
-                drawStart = nil; drawEnd = nil
+    /// Press to place a point (a magnifier follows while held), press again for the other end,
+    /// drag either end to fine-tune, then ↵ to level along the line. Esc cancels.
+    private func pickGesture(photo frame: CGRect) -> some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .named("canvas"))
+            .onChanged { v in
+                if pick.active == nil && pick.start == nil { focused = true; pick.press(at: v.startLocation, within: frame) }
+                pick.move(to: v.location, within: frame)
             }
+            .onEnded { _ in pick.release() }
     }
 
-    private func tap(_ p: CGPoint) {
-        focused = true
-        guard let a = firstPoint else { firstPoint = p; return }
-        firstPoint = nil
-        guard hypot(p.x - a.x, p.y - a.y) > 10 else { return }
-        level(from: a, to: p, label: "Two points")
+    /// The picked line, its magnifiers, and the confirm bar.
+    @ViewBuilder private func pickLayer(fit: CGSize, rotation: Double, area: CGSize) -> some View {
+        LinePickOverlay(pick: pick)
+        if pick.points.count == 1, pick.active == nil, let h = pick.hover {
+            PointLoupe(canvas: area, focus: h) {
+                ZStack(alignment: .topLeading) {
+                    photoLayer(fit, rotation: rotation, area: area, crop: displayCrop)
+                    LinePickOverlay(pick: pick)
+                }
+            }
+            .position(PointLoupe<EmptyView>.position(for: h, in: area))
+        }
+        ForEach(Array(pick.points.enumerated()), id: \.offset) { i, pt in
+            if pick.active == i || (pick.isComplete && pick.active == nil) {
+                PointLoupe(canvas: area, focus: pt) {
+                    ZStack(alignment: .topLeading) {
+                        photoLayer(fit, rotation: rotation, area: area, crop: displayCrop)
+                        LinePickOverlay(pick: pick)
+                    }
+                }
+                .position(PointLoupe<EmptyView>.position(for: pt, in: area))
+                .transition(.opacity.combined(with: .scale(scale: 0.9)))
+            }
+        }
+    }
+
+    @ViewBuilder private var pickBar: some View {
+        if pick.isComplete && pick.active == nil {
+            let next = shown - Geometry.lineTilt(from: pick.points[0], to: pick.points[1])
+            HStack(spacing: 10) {
+                Text(Geometry.format(next)).font(.callout.weight(.medium)).monospacedDigit()
+                Button { applyPick() } label: {
+                    HStack(spacing: 6) { Text("Level along this line"); Text("↵").opacity(0.5) }
+                        .font(.callout.weight(.medium))
+                        .padding(.horizontal, 12).padding(.vertical, 5)
+                        .foregroundStyle(.black).background(.white, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                Button { pick.clear() } label: { Image(systemName: "xmark").frame(width: 20, height: 20) }
+                    .buttonStyle(.plain).help("Cancel (Esc)")
+            }
+            .foregroundStyle(.white)
+            .padding(.leading, 14).padding(.trailing, 8).padding(.vertical, 6)
+            .background(.black.opacity(0.7), in: Capsule())
+            .padding(.bottom, 14)
+        } else if pick.points.count == 1 && pick.active == nil {
+            Text("Now click the other end · arrows nudge the dot · Esc to cancel")
+                .font(.callout).foregroundStyle(.white)
+                .padding(.horizontal, 14).padding(.vertical, 7)
+                .background(.black.opacity(0.7), in: Capsule())
+                .padding(.bottom, 14)
+                .allowsHitTesting(false)
+        }
+    }
+
+    private func applyPick() {
+        guard pick.isComplete else { return }
+        level(from: pick.points[0], to: pick.points[1], label: "Two points")
+        pick.clear()
     }
 
     private func level(from a: CGPoint, to b: CGPoint, label: String) {
@@ -365,122 +633,86 @@ struct PhotoView: View {
         library.setCorrection(photo.id, next, label: label + " " + Geometry.format(next))
     }
 
-    // MARK: Legend and side panel
 
-    private var keyLegend: some View {
-        let keys: [(String, String)] = [
-            ("L", "Level"), ("K", "Keep as shot"), ("U", "Undecided"), ("← →", "Prev / next"),
-            ("[ ]", "±0.1°"), ("⇧[ ⇧]", "±1°"), ("Click ×2", "Level through 2 points"), ("Drag", "Level a line"),
-            ("R", "Detected"), ("0", "Original"), ("G", "Lines"), ("T", "Guide"), ("C", "Compare"),
-            ("Space", "Hold: original"), ("⌘Z", "Undo"), ("Esc", "Grid view"),
-        ]
-        return FlowRow(spacing: 12) {
-            ForEach(keys, id: \.0) { k in
-                HStack(spacing: 5) { Keycap(key: k.0); Text(k.1) }
-            }
-        }
-        .font(.caption).foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
+    // MARK: Crop
+
+    /// The locked ratio in 0…1 units of the leveled frame (nil = free).
+    private var normalizedCropRatio: CGFloat? {
+        cropRatio.value(photoAspect: imageAspect, portrait: cropPortrait).map { $0 / imageAspect }
     }
 
-    private var sidePanel: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                section("Decision") {
-                    HStack(spacing: 6) {
-                        decisionButton(.level, "L", Theme.accent)
-                        decisionButton(.keep, "K", Theme.keep)
-                        decisionButton(.undecided, "U", Color(white: 0.45))
-                    }
-                    if let d = photo.detection {
-                        Text("Detected tilt \(Geometry.format(d.angle)) · \(Int(d.confidence * 100))% confident")
-                            .font(.callout).foregroundStyle(.secondary)
-                    } else {
-                        Text(photo.analyzed ? "No tilt found. Click two points on the horizon to level it." : "Analyzing…")
-                            .font(.callout).foregroundStyle(.secondary)
-                    }
-                }
+    private func startCrop() {
+        pick.clear()
+        showOriginal = false
+        cropDraft = photo.crop ?? CropMath.full
+        cropPortrait = false
+        if photo.crop == nil, let n = normalizedCropRatio { cropDraft = CropMath.fit(ratio: n, around: CGPoint(x: 0.5, y: 0.5)) }
+        withAnimation(.easeOut(duration: 0.15)) { cropMode = true }
+    }
 
-                section("Correction") {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(Geometry.format(preview ?? photo.correction))
-                            .font(.system(size: 30, weight: .medium, design: .monospaced))
-                        if photo.decision != .level {
-                            Text("not applied").foregroundStyle(.secondary)
-                        }
-                    }
-                    HStack(spacing: 6) {
-                        nudge("−1°", -1); nudge("−0.1°", -0.1); nudge("+0.1°", 0.1); nudge("+1°", 1)
-                    }
-                    HStack {
-                        Button("Use detected") { library.resetToDetected(photo.id) }.disabled(photo.detection == nil)
-                        Button("Reset to original") { library.resetToOriginal([photo.id]) }
-                    }
-                }
+    private func applyRatio() {
+        guard let n = normalizedCropRatio else { return }
+        cropDraft = CropMath.fit(ratio: n, around: CGPoint(x: cropDraft.midX, y: cropDraft.midY))
+    }
 
-                section("History") {
-                    Text("Click any step to go back to it. Originals are never modified.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    VStack(spacing: 2) {
-                        ForEach(Array(photo.history.enumerated()), id: \.offset) { i, step in
-                            Button { library.jump(photo.id, to: i) } label: {
-                                HStack {
-                                    Text(step.label)
-                                    Spacer()
-                                    Text(step.date, style: .time).foregroundStyle(.secondary)
-                                }
-                                .padding(.horizontal, 8).padding(.vertical, 6)
-                                .foregroundStyle(i > photo.index ? .secondary : .primary)
-                                .background(i == photo.index ? Theme.raised : .clear, in: RoundedRectangle(cornerRadius: 6))
-                                .overlay(RoundedRectangle(cornerRadius: 6).stroke(i == photo.index ? Theme.accent : .clear))
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                        }
+    private func finishCrop() {
+        let full = cropDraft.width > 0.995 && cropDraft.height > 0.995
+        library.setCrop(photo.id, full ? nil : cropDraft, label: full ? "Crop removed" : "Crop " + (cropRatio == .free ? "" : cropRatio.label(flipped: cropPortrait)))
+        withAnimation(.easeOut(duration: 0.15)) { cropMode = false }
+    }
+
+    private func cancelCrop() { withAnimation(.easeOut(duration: 0.15)) { cropMode = false } }
+
+    /// "+ Version" (V): keeps the frame as it is now as a version; editing goes on.
+    private func addVersion() {
+        let label = cropRatio == .free ? "Free" : cropRatio.label(flipped: cropPortrait)
+        library.addCropVersion(photo.id, rect: cropDraft, ratio: label)
+    }
+
+    /// A version clicked in the strip goes back into the frame, with its ratio lock, to keep editing.
+    private func loadVersion(_ v: CropVersion) {
+        if let m = CropRatio.matching(v.ratio) { cropRatio = m.ratio; cropPortrait = m.flipped } else { cropRatio = .free }
+        withAnimation(.easeOut(duration: 0.15)) { cropDraft = v.rect }
+    }
+
+    private var cropBar: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 4) {
+                ForEach(CropRatio.allCases) { r in
+                    Button { cropRatio = r; applyRatio() } label: {
+                        Text(r.label(flipped: cropRatio == r && cropPortrait)).font(.callout.weight(cropRatio == r ? .semibold : .regular))
+                            .padding(.horizontal, 10).frame(height: 28)
+                            .foregroundStyle(cropRatio == r ? Theme.ground : .primary)
+                            .background(cropRatio == r ? Color.primary : .clear, in: Capsule())
+                            .contentShape(Capsule())
                     }
+                    .buttonStyle(.plain)
                 }
             }
-            .padding(18)
-        }
-        .frame(width: 300)
-        .background(Theme.panel)
-        .overlay(alignment: .leading) { Theme.line.frame(width: 1) }
-    }
-
-    private func section<C: View>(_ title: String, @ViewBuilder _ content: () -> C) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title.uppercased()).font(.caption.weight(.medium)).foregroundStyle(.secondary).tracking(0.6)
-            content()
-        }
-    }
-
-    private func decisionButton(_ d: Decision, _ key: String, _ color: Color) -> some View {
-        let on = photo.decision == d
-        return Button { decide(d) } label: {
-            VStack(spacing: 2) {
-                Text(d == .keep ? "Keep" : d.label).fontWeight(on ? .semibold : .regular)
-                Text(key).font(.system(size: 10, design: .monospaced)).opacity(0.7)
+            Button { cropPortrait.toggle(); applyRatio() } label: {
+                Image(systemName: "arrow.trianglehead.2.clockwise.rotate.90").frame(width: 28, height: 28)
             }
-            .frame(maxWidth: .infinity, minHeight: 44)
-            .foregroundStyle(on ? Color.black : .primary)
-            .background(on ? color : .clear, in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(on ? color : Theme.line, lineWidth: 1.5))
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .disabled(!cropRatio.flippable)
+            .help("Flip the ratio (4:5 ↔ 5:4)")
+            Spacer()
+            Button("Reset") { cropDraft = CropMath.full; if cropRatio != .free && cropRatio != .original { cropRatio = .original } }
+            Button("Cancel") { cancelCrop() }.keyboardShortcut(.cancelAction)
+            Button { finishCrop() } label: {
+                Text("Done").fontWeight(.semibold).padding(.horizontal, 16).frame(height: 30)
+                    .foregroundStyle(Theme.ground).background(Color.primary, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.defaultAction)
         }
-        .buttonStyle(.plain)
-    }
-
-    private func nudge(_ title: String, _ delta: Double) -> some View {
-        Button(title) { library.nudge(photo.id, by: delta) }
-            .font(.system(.callout, design: .monospaced))
-            .frame(maxWidth: .infinity)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 18)
     }
 
     // MARK: Keys
 
     private func decide(_ d: Decision) {
-        library.decide([photo.id], d)
-        if library.advanceAfterDecision { library.step(1) }
+        library.decideAndMove(library.targets(for: photo.id), d)
     }
 
     private func cycle<T: CaseIterable & Equatable>(_ value: T) -> T {
@@ -490,43 +722,75 @@ struct PhotoView: View {
     }
 
     private func handle(_ press: KeyPress) -> KeyPress.Result {
+        if cropMode {
+            guard press.phase == .down else { return .handled }
+            if press.key == .return { finishCrop() } else if press.key == .escape { cancelCrop() }
+            else if press.characters == "v" || press.characters == "V" { addVersion() }
+            else if press.characters == "C", !photo.cropVersions.isEmpty { showStudio = true }
+            return .handled
+        }
+        // Space: quick look (full window). Hold M: the original, like Apple Photos.
         if press.key == .space {
-            showOriginal = press.phase != .up
+            if press.phase == .down {
+                if floating { library.quickLook = false }
+                else { withAnimation(.easeOut(duration: 0.12)) { showOriginal.toggle() } }
+            }
+            return .handled
+        }
+        if press.characters.lowercased() == "m" {
+            if press.phase != .repeat { showOriginal = press.phase != .up }
             return .handled
         }
         guard press.phase != .up else { return .ignored }
         if press.modifiers.contains(.command) { return .ignored }
         switch press.key {
+        // While picking, arrows nudge the end you touched last (⇧ for bigger steps) instead of changing photos.
+        case .leftArrow where !pick.isEmpty: pick.nudge(dx: press.modifiers.contains(.shift) ? -5 : -0.5, dy: 0, within: pickFrame); return .handled
+        case .rightArrow where !pick.isEmpty: pick.nudge(dx: press.modifiers.contains(.shift) ? 5 : 0.5, dy: 0, within: pickFrame); return .handled
+        case .upArrow where !pick.isEmpty: pick.nudge(dx: 0, dy: press.modifiers.contains(.shift) ? -5 : -0.5, within: pickFrame); return .handled
+        case .downArrow where !pick.isEmpty: pick.nudge(dx: 0, dy: press.modifiers.contains(.shift) ? 5 : 0.5, within: pickFrame); return .handled
         case .leftArrow: library.step(-1); return .handled
         case .rightArrow: library.step(1); return .handled
+        case .upArrow: library.step(floating && library.gridActive ? -library.gridColumns : -1); return .handled
+        case .downArrow: library.step(floating && library.gridActive ? library.gridColumns : 1); return .handled
+        case .return where pick.isComplete:
+            applyPick(); return .handled
+        case .return where levelMode:
+            closeLevelTool(); return .handled
         case .escape:
-            if firstPoint != nil { firstPoint = nil } else { library.closePhoto() }
+            if !pick.isEmpty { pick.clear() } else if levelMode { closeLevelTool() } else { library.quickLook = false }
             return .handled
+        case .delete, .deleteForward:
+            // Delete (and ⌘⌫ from the menu): the photo, or the whole selection it's part of. ⌘Z puts it back.
+            library.requestDelete(library.targets(for: photo.id)); return .handled
         default: break
         }
         let repeatable: Set<String> = ["[", "]", "{", "}"]
         if press.phase == .repeat && !repeatable.contains(press.characters) { return .handled }
         switch press.characters {
-        case "l", "L": decide(.level)
+        case "l", "L": library.quickLevel(library.targets(for: photo.id))
         case "k", "K": decide(.keep)
         case "u", "U": decide(.undecided)
+        case "f", "F": library.toggleFavorite(library.targets(for: photo.id))
         case "[": library.nudge(photo.id, by: 0.1)
         case "]": library.nudge(photo.id, by: -0.1)
         case "{": library.nudge(photo.id, by: 1)
         case "}": library.nudge(photo.id, by: -1)
-        case "r", "R": library.resetToDetected(photo.id)
+        case "r", "R": toggleLevelTool()
         case "0": library.resetToOriginal([photo.id])
         case "g", "G": gridMode = cycle(gridMode)
         case "t", "T": showGuide.toggle()
-        case "c", "C": compare = cycle(compare)
+        case "c": startCrop()
+        case "C": if photo.cropVersions.isEmpty { startCrop() } else { showStudio = true }
         case "h", "H": showDetected.toggle()
+        case "i", "I": showInfo.toggle()
+        case "s", "S": withAnimation { library.showSettings.toggle() }
         default: return .ignored
         }
         return .handled
     }
 }
 
-/// Wraps children onto new lines when they run out of width.
 struct FlowRow: Layout {
     var spacing: CGFloat = 8
 

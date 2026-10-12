@@ -49,9 +49,19 @@ public enum Renderer {
             .transformed(by: CGAffineTransform(translationX: -crop.minX, y: -crop.minY))
     }
 
-    public static func export(source: URL, degrees: Double, to destination: URL, format: ExportFormat, quality: Double) throws {
+    /// Crops a leveled image to `crop`: a rectangle in 0…1 units of the leveled frame, origin top-left.
+    public static func cropped(_ image: CIImage, to crop: CGRect?) -> CIImage {
+        guard let c = crop?.standardized, c.width > 0, c.height > 0,
+              c != CGRect(x: 0, y: 0, width: 1, height: 1) else { return image }
+        let e = image.extent
+        let r = CGRect(x: e.minX + c.minX * e.width, y: e.minY + (1 - c.maxY) * e.height,
+                       width: c.width * e.width, height: c.height * e.height).integral.intersection(e)
+        return image.cropped(to: r).transformed(by: CGAffineTransform(translationX: -r.minX, y: -r.minY))
+    }
+
+    public static func export(source: URL, degrees: Double, crop: CGRect? = nil, to destination: URL, format: ExportFormat, quality: Double) throws {
         guard let image = loadFullImage(source) else { throw RenderError.unreadable(source) }
-        let output = leveled(image, degrees: degrees)
+        let output = cropped(leveled(image, degrees: degrees), to: crop)
         let space = CGColorSpace(name: format == .jpeg ? CGColorSpace.sRGB : CGColorSpace.displayP3)!
         guard let cg = context.createCGImage(output, from: output.extent, format: format == .tiff ? .RGBA16 : .RGBA8, colorSpace: space) else {
             throw RenderError.renderFailed(source)

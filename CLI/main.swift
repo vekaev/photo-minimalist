@@ -54,7 +54,7 @@ case "analyze":
     let results = UnsafeMutableBufferPointer<Detection?>.allocate(capacity: files.count)
     results.initialize(repeating: nil)
     DispatchQueue.concurrentPerform(iterations: files.count) { i in
-        results[i] = HorizonDetector.detect(url: files[i])
+        results[i] = HorizonDetector.detect(url: files[i], rawCompanion: nil)
     }
     for (i, url) in files.enumerated() {
         let rel = url.path.replacingOccurrences(of: folder.path + "/", with: "")

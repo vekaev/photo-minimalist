@@ -1,41 +1,28 @@
 import AppKit
 import SwiftUI
 
+/// Monochrome, Notion-like palette that follows the system light / dark appearance.
 enum Theme {
-    static let accent = Color(red: 0.95, green: 0.66, blue: 0.23)
-    static let keep = Color(red: 0.71, green: 0.54, blue: 0.88)
-    static let ground = Color(red: 0.07, green: 0.075, blue: 0.08)
-    static let panel = Color(red: 0.10, green: 0.11, blue: 0.12)
-    static let raised = Color(red: 0.14, green: 0.15, blue: 0.16)
-    static let line = Color(red: 0.18, green: 0.20, blue: 0.22)
+    private static func dynamic(_ light: NSColor, _ dark: NSColor) -> Color {
+        Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light })
+    }
+    private static func gray(_ w: CGFloat) -> NSColor { NSColor(white: w, alpha: 1) }
+
+    static let ground = dynamic(gray(1.0), gray(0.098))      // page
+    static let panel = dynamic(NSColor(red: 0.969, green: 0.969, blue: 0.961, alpha: 1), gray(0.125)) // sidebar
+    static let raised = dynamic(gray(0.925), gray(0.18))     // selected row, keycaps
+    static let line = Color.primary.opacity(0.09)            // hairlines
+    static let accent = Color.primary
+    static let keep = Color.primary
+    /// For marks drawn on top of photos.
+    static let onPhoto = Color.white
 
     static func color(for status: Status) -> Color {
         switch status {
-        case .needsReview: return accent
-        case .level: return Color(red: 0.49, green: 0.77, blue: 0.60)
-        case .keep: return keep
-        case .alreadyLevel: return Color(white: 0.45)
-        case .noTilt: return Color(red: 0.25, green: 0.50, blue: 0.85)
-        case .pending: return Color(white: 0.3)
+        case .level, .keep: return .primary
+        case .needsReview: return .primary.opacity(0.7)
+        default: return .secondary
         }
-    }
-}
-
-/// Downscaled, orientation-corrected images, loaded off the main thread and cached by size.
-final class ImageCache: @unchecked Sendable {
-    static let shared = ImageCache()
-    private let cache = NSCache<NSString, CGImage>()
-
-    init() { cache.countLimit = 600 }
-
-    func image(for url: URL, maxPixel: Int) async -> CGImage? {
-        let key = "\(maxPixel)|\(url.path)" as NSString
-        if let hit = cache.object(forKey: key) { return hit }
-        let image = await Task.detached(priority: .userInitiated) {
-            ImageLoader.thumbnail(url, maxPixel: maxPixel)
-        }.value
-        if let image { cache.setObject(image, forKey: key) }
-        return image
     }
 }
 
@@ -138,11 +125,11 @@ struct StraightenRuler: View {
                     let h: CGFloat = isFive ? 22 : isWhole ? 15 : isHalf ? 10 : 5
                     var p = Path()
                     p.move(to: CGPoint(x: x, y: size.height - h)); p.addLine(to: CGPoint(x: x, y: size.height))
-                    ctx.stroke(p, with: .color(.white.opacity(isWhole ? 0.7 : 0.3)), lineWidth: isWhole ? 1 : 0.5)
+                    ctx.stroke(p, with: .color(.primary.opacity(isWhole ? 0.55 : 0.22)), lineWidth: isWhole ? 1 : 0.5)
                     if isFive || (isWhole && pointsPerDegree >= 24) {
                         let label = Text(isFive ? "\(tenths / 10)°" : "\(tenths / 10)")
                             .font(.system(size: isFive ? 11 : 9, design: .monospaced))
-                            .foregroundStyle(.white.opacity(isFive ? 0.8 : 0.45))
+                            .foregroundStyle(.primary.opacity(isFive ? 0.7 : 0.4))
                         ctx.draw(label, at: CGPoint(x: x, y: size.height - h - 8))
                     }
                 }
@@ -150,13 +137,10 @@ struct StraightenRuler: View {
             }
             var marker = Path()
             marker.move(to: CGPoint(x: mid, y: 4)); marker.addLine(to: CGPoint(x: mid, y: size.height))
-            ctx.stroke(marker, with: .color(Theme.accent), lineWidth: 2)
+            ctx.stroke(marker, with: .color(.primary), lineWidth: 1.5)
         }
-        .frame(height: 52)
-        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(alignment: .topLeading) {
-            Text("Drag to rotate · hold ⌥ for fine").font(.caption2).foregroundStyle(.secondary).padding(6)
-        }
+        .frame(height: 44)
+        .mask(LinearGradient(colors: [.clear, .black, .black, .clear], startPoint: .leading, endPoint: .trailing))
         .contentShape(Rectangle())
         .gesture(
             DragGesture(minimumDistance: 0)

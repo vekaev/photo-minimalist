@@ -23,6 +23,12 @@ public enum Geometry {
         return deg
     }
 
+    /// Width / height of the final picture: the image's aspect, narrowed by an optional crop.
+    public static func finalAspect(_ imageAspect: CGFloat, crop: CGRect?) -> CGFloat {
+        guard let c = crop, c.width > 0, c.height > 0 else { return imageAspect }
+        return imageAspect * c.width / c.height
+    }
+
     public static func format(_ degrees: Double) -> String {
         let rounded = (degrees * 10).rounded() / 10
         if rounded == 0 { return "0.0°" }

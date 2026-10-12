@@ -3,6 +3,7 @@ options:
   bundleIdPrefix: app.horizonleveler
   deploymentTarget:
     macOS: "14.0"
+    iOS: "17.0"
 settings:
   base:
     SWIFT_VERSION: "5.0"
@@ -14,13 +15,18 @@ targets:
     sources:
       - App
       - Core
+      - Shared
     settings:
       base:
+        # The app ID stays the same so settings, the last folder and permissions carry over from Horizon Leveler.
         PRODUCT_BUNDLE_IDENTIFIER: app.horizonleveler.HorizonLeveler
+        PRODUCT_NAME: Photo Minimalist
         GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: Horizon Leveler
+        INFOPLIST_KEY_CFBundleDisplayName: Photo Minimalist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.photography
+        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "Adds your photos to Apple Photos and marks your favorites there, only when you ask."
+        INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: "Adds your photos to Apple Photos, only when you ask."
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
         ENABLE_APP_SANDBOX: NO
@@ -36,3 +42,30 @@ targets:
       base:
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_STYLE: Manual
+  HorizonLeveler-iOS:
+    type: application
+    platform: iOS
+    sources:
+      - iOS
+      - Core
+      - Shared
+      - App/Photo.swift
+      - App/Library.swift
+    settings:
+      base:
+        PRODUCT_NAME: Minimalist
+        PRODUCT_BUNDLE_IDENTIFIER: app.horizonleveler.ios
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Minimalist
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
+        INFOPLIST_KEY_UIFileSharingEnabled: YES
+        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "Adds your photos to Apple Photos and marks your favorites there, only when you ask."
+        INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: "Adds your photos to Apple Photos, only when you ask."
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: "1,2"
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        CODE_SIGN_STYLE: Automatic

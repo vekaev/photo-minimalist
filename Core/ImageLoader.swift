@@ -38,15 +38,53 @@ public enum ImageLoader {
         UTType(filenameExtension: url.pathExtension)?.conforms(to: .rawImage) ?? false
     }
 
-    /// Orientation-corrected downscaled image. Works for RAW files too.
-    public static func thumbnail(_ url: URL, maxPixel: Int) -> CGImage? {
+    /// Orientation-corrected downscaled image. For RAW files the camera's embedded preview is used when it's
+    /// big enough, which is many times faster than decoding the RAW itself.
+    /// - Parameter embeddedAtLeast: accept a file's embedded thumbnail if it's at least this big (any format).
+    public static func thumbnail(_ url: URL, maxPixel: Int, embeddedAtLeast: Int? = nil) -> CGImage? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
-        let options: [CFString: Any] = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: maxPixel,
-            kCGImageSourceShouldCacheImmediately: true,
-        ]
-        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+        func make(always: Bool) -> CGImage? {
+            let options: [CFString: Any] = [
+                always ? kCGImageSourceCreateThumbnailFromImageAlways : kCGImageSourceCreateThumbnailFromImageIfAbsent: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+                kCGImageSourceShouldCacheImmediately: true,
+            ]
+            return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+        }
+        let minimum = embeddedAtLeast ?? (isRaw(url) ? min(maxPixel, 1000) : nil)
+        if let minimum, let embedded = make(always: false), max(embedded.width, embedded.height) >= minimum {
+            return embedded
+        }
+        return make(always: true)
+    }
+
+    public struct Group: Sendable {
+        /// The file shown and analyzed (the JPEG of a RAW + JPEG pair).
+        public let primary: URL
+        /// Files with the same name in the same folder that travel with it (the RAW).
+        public let companions: [URL]
+    }
+
+    /// Pairs RAW files with a JPEG / HEIC of the same name in the same folder, e.g. DSCF0015.JPG + DSCF0015.RAF.
+    /// RAWs without such a partner stay on their own.
+    public static func pairRawWithJPEG(_ urls: [URL]) -> [Group] {
+        var buckets: [String: [URL]] = [:]
+        for url in urls {
+            let key = url.deletingPathExtension().standardizedFileURL.path.lowercased()
+            buckets[key, default: []].append(url)
+        }
+        let rank: [String: Int] = ["jpg": 0, "jpeg": 0, "heic": 1, "heif": 1]
+        var companionsOf: [URL: [URL]] = [:]
+        var hidden: Set<URL> = []
+        for files in buckets.values where files.count > 1 {
+            let raws = files.filter(isRaw)
+            guard !raws.isEmpty,
+                  let main = files.filter({ !isRaw($0) }).min(by: { (rank[$0.pathExtension.lowercased()] ?? 9) < (rank[$1.pathExtension.lowercased()] ?? 9) })
+            else { continue }
+            companionsOf[main] = raws
+            hidden.formUnion(raws)
+        }
+        return urls.filter { !hidden.contains($0) }.map { Group(primary: $0, companions: companionsOf[$0] ?? []) }
     }
 }

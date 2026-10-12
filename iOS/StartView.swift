@@ -28,6 +28,9 @@ struct StartView: View {
                 .padding(.bottom, 12)
         }
         .padding()
+        // iPad: a column, not a full-width button.
+        .frame(maxWidth: 520)
+        .frame(maxWidth: .infinity)
         .folderPicker(isPresented: $picking)
     }
 }

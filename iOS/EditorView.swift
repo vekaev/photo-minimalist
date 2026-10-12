@@ -36,6 +36,11 @@ struct EditorView: View {
     @State private var showInfo = false
     /// Holding the corner chip: preview the leveled photo and show the suggested line.
     @State private var chipHold = false
+    /// iPad two-pane layout (regular width): the right pane, with a sidebar button instead of Close, popovers
+    /// instead of sheets and the Mac's info card over the photo. nil: the iPhone's full-screen editor.
+    let pad: PadChrome?
+
+    init(pad: PadChrome? = nil) { self.pad = pad }
 
     /// The level tool is open (shared with the Mac's R; stays open from photo to photo until Done).
     private var levelMode: Bool { library.levelTool && !cropMode }
@@ -52,12 +57,18 @@ struct EditorView: View {
                     CropVersionStrip(photo: photo, image: image, draft: cropDraft, height: 44,
                                      onAdd: { addVersion(photo) }, onLoad: loadVersion, onCompare: { showStudio = true })
                         .padding(.horizontal, 16).padding(.top, 10)
+                        .frame(maxWidth: pad == nil ? .infinity : 720)
                     cropBar(photo)
-                } else if levelMode { controls(photo) }
+                        .frame(maxWidth: pad == nil ? .infinity : 640)
+                } else if levelMode {
+                    controls(photo)
+                        .frame(maxWidth: pad == nil ? .infinity : 640)
+                }
             }
             .background(Color(.systemBackground))
-            .deleteConfirmation(active: true)
-            .sheet(isPresented: $showInfo) {
+            .deleteConfirmation(active: pad == nil)
+            .focusedSceneValue(\.editorKeys, keys(photo))
+            .sheet(isPresented: Binding(get: { pad == nil && showInfo }, set: { showInfo = $0 })) {
                 ScrollView { PhotoInfoCard(photo: photo).frame(maxWidth: .infinity, alignment: .leading).padding(20) }
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
@@ -70,8 +81,8 @@ struct EditorView: View {
                     withAnimation(.easeOut(duration: 0.15)) { cropMode = false }
                 }, onClose: { showStudio = false })
             }
-            // Settings slide up from the bottom; swipe down to close.
-            .sheet(isPresented: Binding(get: { library.showSettings }, set: { library.showSettings = $0 })) {
+            // Settings slide up from the bottom; swipe down to close. (iPad: a popover from the button.)
+            .sheet(isPresented: Binding(get: { pad == nil && library.showSettings }, set: { library.showSettings = $0 })) {
                 SettingsSheet(photo: photo, lines: $lines, showGuide: $showGuide, showDetected: $showDetected)
                     .presentationDetents([.height(380), .large])
                     .presentationDragIndicator(.visible)
@@ -122,18 +133,23 @@ struct EditorView: View {
         let room = Double(barWidth) - 16 - 44 - 44 - Double(counterWidth) - 4
         let shown = barWidth == 0 ? all.count : PhotoControl.fitting(all.map { _ in 44 }, in: room, spacing: 0, overflowWidth: 44)
         return HStack(spacing: 0) {
-            iconButton("chevron.down", "Close") { library.closePhoto() }
+            if let pad {
+                iconButton("sidebar.left", pad.sidebarShown ? "Hide Sidebar" : "Show Sidebar") { pad.toggleSidebar() }
+            } else {
+                iconButton("chevron.down", "Close") { library.closePhoto() }
+            }
             Spacer(minLength: 0)
             // The position doubles as the ⓘ button (no room for another icon): date, camera, exposure, sizes.
-            Button { showInfo = true } label: {
+            Button { toggleInfo() } label: {
                 HStack(spacing: 4) {
                     Text(counter).monospacedDigit()
-                    Image(systemName: "info.circle")
+                    Image(systemName: showInfo && pad != nil ? "info.circle.fill" : "info.circle")
                 }
                 .font(.footnote).foregroundStyle(.secondary)
                 .lineLimit(1).fixedSize()
-                .frame(minHeight: 44).contentShape(Rectangle())
+                .frame(minHeight: 44).padding(.horizontal, 6).contentShape(Rectangle())
             }
+            .hoverEffect(.highlight)
             .accessibilityLabel("Info, photo \(i) of \(library.navigation.count)")
             Spacer(minLength: 0)
             ForEach(all.prefix(shown)) { c in
@@ -143,6 +159,7 @@ struct EditorView: View {
                         .foregroundStyle(c == .favorite && p.favorite ? AnyShapeStyle(.red) : AnyShapeStyle(.tint))
                         .frame(width: 44, height: 44).contentShape(Rectangle())
                 }
+                .hoverEffect(.highlight)
                 .disabled(!enabled(c, p))
                 .accessibilityLabel(accessibility(c, p))
             }
@@ -156,12 +173,18 @@ struct EditorView: View {
                     Image(systemName: "ellipsis").font(.system(size: 17, weight: .medium))
                         .frame(width: 44, height: 44).contentShape(Rectangle())
                 }
+                .hoverEffect(.highlight)
                 .accessibilityLabel("More")
             }
             // Always here: the settings sheet is where the buttons above are chosen. Long-press: Move to Trash.
             iconButton("slider.horizontal.3", "Settings") { library.showSettings = true }
                 .contextMenu {
                     Button(role: .destructive) { library.requestDelete([p.id]) } label: { Label("Move to Trash", systemImage: "trash") }
+                }
+                .popover(isPresented: Binding(get: { pad != nil && library.showSettings }, set: { library.showSettings = $0 }),
+                         arrowEdge: .top) {
+                    SettingsSheet(photo: p, lines: $lines, showGuide: $showGuide, showDetected: $showDetected)
+                        .frame(idealWidth: 400, idealHeight: 640)
                 }
         }
         .padding(.horizontal, 8)
@@ -181,7 +204,7 @@ struct EditorView: View {
         case .trash: library.requestDelete([p.id])
         case .photos: library.addToPhotos([p.id])
         case .undo: library.undo()
-        case .info: showInfo = true
+        case .info: toggleInfo()
         case .viewOptions: library.showSettings = true
         case .compare, .export, .fixes: break   // not on iPhone (see PhotoControl.available)
         }
@@ -224,7 +247,37 @@ struct EditorView: View {
             Image(systemName: name).font(.system(size: 17, weight: .medium))
                 .frame(width: 44, height: 44).contentShape(Rectangle())
         }
+        .hoverEffect(.highlight)
         .accessibilityLabel(label)
+    }
+
+    /// iPhone: the details sheet. iPad: the Mac's card over the photo, on and off.
+    private func toggleInfo() {
+        if pad == nil { showInfo = true } else { withAnimation(.easeOut(duration: 0.15)) { showInfo.toggle() } }
+    }
+
+    private func toggleCrop(_ p: Photo) {
+        if cropMode { withAnimation(.easeOut(duration: 0.15)) { cropMode = false } } else { startCrop(p) }
+    }
+
+    /// The keyboard's view of this editor (Photo menu: Space, R, C, ↵, Esc, I).
+    private func keys(_ p: Photo) -> EditorKeys {
+        EditorKeys(
+            showOriginal: showOriginal, cropMode: cropMode, levelMode: levelMode, pickActive: !pick.isEmpty,
+            toggleOriginal: { withAnimation(.easeOut(duration: 0.12)) { showOriginal.toggle() } },
+            toggleInfo: { toggleInfo() },
+            toggleLevelTool: { toggleLevelTool() },
+            toggleCrop: { toggleCrop(p) },
+            confirm: {
+                if cropMode { applyCrop(p) }
+                else if pick.isComplete { applyPick(p) }
+                else if levelMode { toggleLevelTool() }
+            },
+            cancel: {
+                if cropMode { withAnimation(.easeOut(duration: 0.15)) { cropMode = false } }
+                else if !pick.isEmpty { pick.clear() }
+                else if levelMode { toggleLevelTool() }
+            })
     }
 
     // MARK: Photo
@@ -318,6 +371,19 @@ struct EditorView: View {
             )
             .animation(.easeOut(duration: 0.15), value: pick.isComplete)
             .overlay(alignment: .bottom) { if levelMode { pickBar(p) } }
+            // iPad: the Mac's info card, bottom left over the photo (ⓘ or I).
+            .overlay(alignment: .bottomLeading) {
+                if pad != nil && showInfo && !cropMode {
+                    PhotoInfoCard(photo: p, onDark: true)
+                        .padding(12)
+                        .frame(maxWidth: 340, alignment: .leading)
+                        .background(.black.opacity(0.62), in: RoundedRectangle(cornerRadius: 10))
+                        .padding(12)
+                        .transition(.opacity)
+                        .onTapGesture { toggleInfo() }
+                        .task(id: p.url) { await library.fillInfo(p) }
+                }
+            }
             .overlay(alignment: .top) {
                 if let hint = hint(p) {
                     Text(hint)
@@ -346,6 +412,7 @@ struct EditorView: View {
                     .frame(minHeight: 44).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .hoverEffect(.highlight)
                 .accessibilityLabel("Leveled. Undo")
             } else if library.hasSuggestion(p), let d = p.detection {
                 HStack(spacing: 6) {
@@ -360,6 +427,12 @@ struct EditorView: View {
                     chipHold = held
                     peek = held ? DecisionSwitch.levelTarget(p) : nil
                 })
+                // iPad with a pointer: hovering previews the leveled photo, like the Mac.
+                .onHover { inside in
+                    chipHold = inside
+                    peek = inside ? DecisionSwitch.levelTarget(p) : nil
+                }
+                .hoverEffect(.highlight)
                 .accessibilityAddTraits(.isButton)
                 .accessibilityLabel("Tilted \(Geometry.format(d.angle)). Level")
                 .accessibilityHint("Hold to preview")
@@ -437,11 +510,7 @@ struct EditorView: View {
                     Text("Reset").frame(maxWidth: .infinity, minHeight: 50)
                         .overlay(Capsule().strokeBorder(Ink.rule, lineWidth: 1))
                 }
-                Button {
-                    let full = cropDraft.width > 0.995 && cropDraft.height > 0.995
-                    library.setCrop(p.id, full ? nil : cropDraft, label: full ? "Crop removed" : "Crop " + (cropRatio == .free ? "" : cropRatio.label(flipped: cropPortrait)))
-                    withAnimation(.easeOut(duration: 0.15)) { cropMode = false }
-                } label: {
+                Button { applyCrop(p) } label: {
                     Text("Done").font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 50)
                         .foregroundStyle(Color(.systemBackground)).background(Color.primary, in: Capsule())
                 }
@@ -452,15 +521,26 @@ struct EditorView: View {
         .padding(.top, 14).padding(.bottom, 8)
     }
 
+    private func applyCrop(_ p: Photo) {
+        let full = cropDraft.width > 0.995 && cropDraft.height > 0.995
+        library.setCrop(p.id, full ? nil : cropDraft, label: full ? "Crop removed" : "Crop " + (cropRatio == .free ? "" : cropRatio.label(flipped: cropPortrait)))
+        withAnimation(.easeOut(duration: 0.15)) { cropMode = false }
+    }
+
+    /// "Level along this line" (or ↵) once both ends are picked.
+    private func applyPick(_ p: Photo) {
+        guard pick.isComplete else { return }
+        let next = shown(p) - Geometry.lineTilt(from: pick.points[0], to: pick.points[1])
+        library.setCorrection(p.id, next, label: "Two points " + Geometry.format(next))
+        pick.clear()
+    }
+
     @ViewBuilder private func pickBar(_ p: Photo) -> some View {
         if pick.isComplete && pick.active == nil {
             let next = shown(p) - Geometry.lineTilt(from: pick.points[0], to: pick.points[1])
             HStack(spacing: 10) {
                 Text(Geometry.format(next)).font(.subheadline.weight(.medium)).monospacedDigit()
-                Button {
-                    library.setCorrection(p.id, next, label: "Two points " + Geometry.format(next))
-                    pick.clear()
-                } label: {
+                Button { applyPick(p) } label: {
                     Text("Level along this line").font(.subheadline.weight(.semibold))
                         .padding(.horizontal, 14).padding(.vertical, 8)
                         .foregroundStyle(.black).background(.white, in: Capsule())

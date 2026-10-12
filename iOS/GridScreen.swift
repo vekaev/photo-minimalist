@@ -39,35 +39,7 @@ struct GridScreen: View {
                                     } else { open(p, in: items) }
                                 }
                                 .contextMenu {
-                                    Button { library.decide([p.id], .level) } label: { Label("Level", systemImage: "level") }
-                                    Button { library.decide([p.id], .keep) } label: { Label("Keep as shot", systemImage: "hand.raised") }
-                                    Button { library.decide([p.id], .undecided) } label: { Label("Undecided", systemImage: "circle.dashed") }
-                                    Button { library.toggleFavorite([p.id]) } label: {
-                                        Label(p.favorite ? "Unfavorite" : "Favorite", systemImage: p.favorite ? "heart.slash" : "heart")
-                                    }
-                                    Divider()
-                                    Button { library.copyPhotos([p], kind: .asShown) } label: { Label("Copy", systemImage: "doc.on.doc") }
-                                    Button { library.addToPhotos([p.id]) } label: { Label("Add to Photos", systemImage: "photo.badge.plus") }
-                                    if p.rawCompanion != nil {
-                                        Button { library.copyPhotos([p], kind: .raw) } label: { Label("Copy RAW File", systemImage: "doc.on.doc.fill") }
-                                    }
-                                    if !library.savable([p.id]).isEmpty {
-                                        Button { Task { await saveOriginals([p.id]) } } label: {
-                                            Label("Save to Original", systemImage: "square.and.arrow.down")
-                                        }
-                                    }
-                                    if library.hasBackup(p) {
-                                        Button { library.restoreOriginals([p.id]) } label: {
-                                            Label("Restore Original", systemImage: "clock.arrow.circlepath")
-                                        }
-                                    }
-                                    Button(role: .destructive) { library.resetToOriginal([p.id]) } label: {
-                                        Label("Reset Decision", systemImage: "arrow.counterclockwise")
-                                    }
-                                    Divider()
-                                    Button(role: .destructive) { library.requestDelete([p.id]) } label: {
-                                        Label("Delete", systemImage: "trash")
-                                    }
+                                    PhotoContextMenu(photo: p)
                                 } preview: {
                                     // The iPhone counterpart of the Mac's floating quick look.
                                     Peek(photo: p, note: library.note(for: p))
@@ -164,83 +136,12 @@ struct GridScreen: View {
     }
 
     private var menu: some View {
-        Menu {
-            Button { library.undo() } label: { Label("Undo", systemImage: "arrow.uturn.backward") }
-                .disabled(!library.canUndo)
-            Button { library.showActivity = true } label: { Label("History", systemImage: "clock.arrow.circlepath") }
-            Button { library.applyAutoApprove() } label: {
-                Label("Apply all suggestions", systemImage: "wand.and.stars")
-            }
-            // A collection, not a tab: photos with two or more crop versions. Any tab leaves it.
-            Button { withAnimation(.easeOut(duration: 0.15)) { tab = .crops } } label: {
-                Label("Photos with crop versions (\(library.count(.crops)))", systemImage: "crop")
-            }
-            Divider()
-            Button { exporter.run(library) } label: {
-                Label("Export \(library.toExport.count) leveled", systemImage: "square.and.arrow.up")
-            }
-            .disabled(library.toExport.isEmpty || exporter.running)
-            Button { confirmReplace = true } label: {
-                Label("Replace \(library.savable(library.toExport.map(\.id)).count) originals…", systemImage: "square.and.arrow.down")
-            }
-            .disabled(library.savable(library.toExport.map(\.id)).isEmpty || exporter.running)
-            Menu {
-                let favorites = library.photos.filter(\.favorite).map(\.id)
-                Button { library.addToPhotos(favorites) } label: { Label("Add \(favorites.count) favorites", systemImage: "heart") }
-                    .disabled(favorites.isEmpty)
-                Button { library.addToPhotos(library.photos.map(\.id)) } label: {
-                    Label("Add all \(library.photos.count)", systemImage: "photo.stack")
-                }
-                Button { library.syncFavoritesToPhotos() } label: { Label("Mark favorites in Photos", systemImage: "heart.circle") }
-                    .disabled(favorites.isEmpty)
-            } label: { Label("Apple Photos", systemImage: "photo.on.rectangle") }
-            SwitchFolderMenu()
-            Button { picking = true } label: { Label("Open another folder", systemImage: "folder") }
-        } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(size: 17, weight: .medium))
-                .frame(width: 44, height: 44)
-                .contentShape(Rectangle())
-        }
-        .accessibilityLabel("More")
+        FolderMenu(tab: $tab, exporter: exporter, confirmReplace: $confirmReplace, picking: $picking)
     }
 
     // MARK: Tabs: plain words, the current one in full ink
 
-    private var tabs: some View {
-        VStack(spacing: 0) {
-            // Labels never wrap; with big counts the row scrolls sideways instead.
-            ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 22) {
-                ForEach(Filter.allCases) { t in
-                    Button { withAnimation(.easeOut(duration: 0.15)) { tab = t } } label: {
-                        HStack(spacing: 5) {
-                            // A heart instead of the word keeps the row short.
-                            if t == .favorites {
-                                Image(systemName: tab == t ? "heart.fill" : "heart").accessibilityLabel(t.label)
-                            } else {
-                                Text(t.label)
-                            }
-                            Text("\(library.count(t))").foregroundStyle(.tertiary).monospacedDigit()
-                        }
-                        .lineLimit(1)
-                        .fixedSize()
-                        .font(.subheadline.weight(tab == t ? .semibold : .regular))
-                        .foregroundStyle(tab == t ? .primary : .secondary)
-                        .padding(.vertical, 10)
-                        .overlay(alignment: .bottom) {
-                            Rectangle().fill(tab == t ? Color.primary : .clear).frame(height: 1.5)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 20)
-            }
-            Rectangle().fill(Ink.rule).frame(height: Ink.hairline)
-        }
-        .padding(.bottom, 2)
-    }
+    private var tabs: some View { FilterTabs(tab: $tab) }
 
     /// Select mode's bottom bar: Favorite / Level / Delete / Done for the picked photos.
     private var selectBar: some View {
@@ -282,7 +183,7 @@ struct GridScreen: View {
 }
 
 /// A square thumbnail showing the photo as it will be exported.
-private struct Cell: View {
+struct Cell: View {
     @Environment(Library.self) private var library
     let photo: Photo
     let showMark: Bool
@@ -397,7 +298,7 @@ final class Exporter {
 }
 
 /// Floating preview shown on long-press: the photo as it will be, with its status.
-private struct Peek: View {
+struct Peek: View {
     let photo: Photo
     let note: String
     @State private var image: CGImage?
@@ -425,5 +326,142 @@ private struct Peek: View {
         }
         .frame(width: 340)
         .task { image = await ImageCache.shared.image(for: photo.url, rawCompanion: photo.rawCompanion, maxPixel: 1200) }
+    }
+}
+
+/// The tabs over the grid (and the iPad sidebar): plain words, the current one in full ink.
+struct FilterTabs: View {
+    @Environment(Library.self) private var library
+    @Binding var tab: Filter
+    var inset: CGFloat = 20
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Labels never wrap; with big counts the row scrolls sideways instead.
+            ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 22) {
+                ForEach(Filter.allCases) { t in
+                    Button { withAnimation(.easeOut(duration: 0.15)) { tab = t } } label: {
+                        HStack(spacing: 5) {
+                            // A heart instead of the word keeps the row short.
+                            if t == .favorites {
+                                Image(systemName: tab == t ? "heart.fill" : "heart").accessibilityLabel(t.label)
+                            } else {
+                                Text(t.label)
+                            }
+                            Text("\(library.count(t))").foregroundStyle(.tertiary).monospacedDigit()
+                        }
+                        .lineLimit(1)
+                        .fixedSize()
+                        .font(.subheadline.weight(tab == t ? .semibold : .regular))
+                        .foregroundStyle(tab == t ? .primary : .secondary)
+                        .padding(.vertical, 10)
+                        .overlay(alignment: .bottom) {
+                            Rectangle().fill(tab == t ? Color.primary : .clear).frame(height: 1.5)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, inset)
+            }
+            Rectangle().fill(Ink.rule).frame(height: Ink.hairline)
+        }
+        .padding(.bottom, 2)
+    }
+}
+
+/// The grid's ⋯ menu (also the iPad sidebar's): undo, History, suggestions, export, Apple Photos, folders.
+struct FolderMenu: View {
+    @Environment(Library.self) private var library
+    @Binding var tab: Filter
+    let exporter: Exporter
+    @Binding var confirmReplace: Bool
+    @Binding var picking: Bool
+
+    var body: some View {
+        Menu {
+            Button { library.undo() } label: { Label("Undo", systemImage: "arrow.uturn.backward") }
+                .disabled(!library.canUndo)
+            Button { library.showActivity = true } label: { Label("History", systemImage: "clock.arrow.circlepath") }
+            Button { library.applyAutoApprove() } label: {
+                Label("Apply all suggestions", systemImage: "wand.and.stars")
+            }
+            // A collection, not a tab: photos with two or more crop versions. Any tab leaves it.
+            Button { withAnimation(.easeOut(duration: 0.15)) { tab = .crops } } label: {
+                Label("Photos with crop versions (\(library.count(.crops)))", systemImage: "crop")
+            }
+            Divider()
+            Button { exporter.run(library) } label: {
+                Label("Export \(library.toExport.count) leveled", systemImage: "square.and.arrow.up")
+            }
+            .disabled(library.toExport.isEmpty || exporter.running)
+            Button { confirmReplace = true } label: {
+                Label("Replace \(library.savable(library.toExport.map(\.id)).count) originals…", systemImage: "square.and.arrow.down")
+            }
+            .disabled(library.savable(library.toExport.map(\.id)).isEmpty || exporter.running)
+            Menu {
+                let favorites = library.photos.filter(\.favorite).map(\.id)
+                Button { library.addToPhotos(favorites) } label: { Label("Add \(favorites.count) favorites", systemImage: "heart") }
+                    .disabled(favorites.isEmpty)
+                Button { library.addToPhotos(library.photos.map(\.id)) } label: {
+                    Label("Add all \(library.photos.count)", systemImage: "photo.stack")
+                }
+                Button { library.syncFavoritesToPhotos() } label: { Label("Mark favorites in Photos", systemImage: "heart.circle") }
+                    .disabled(favorites.isEmpty)
+            } label: { Label("Apple Photos", systemImage: "photo.on.rectangle") }
+            SwitchFolderMenu()
+            Button { picking = true } label: { Label("Open another folder", systemImage: "folder") }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 17, weight: .medium))
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .accessibilityLabel("More")
+    }
+}
+
+/// Long-press (iPhone) / right-click (iPad) on a photo in the grid or the iPad sidebar.
+struct PhotoContextMenu: View {
+    @Environment(Library.self) private var library
+    let photo: Photo
+
+    var body: some View {
+        let p = photo
+        Button { library.decide([p.id], .level) } label: { Label("Level", systemImage: "level") }
+        Button { library.decide([p.id], .keep) } label: { Label("Keep as shot", systemImage: "hand.raised") }
+        Button { library.decide([p.id], .undecided) } label: { Label("Undecided", systemImage: "circle.dashed") }
+        Button { library.toggleFavorite([p.id]) } label: {
+            Label(p.favorite ? "Unfavorite" : "Favorite", systemImage: p.favorite ? "heart.slash" : "heart")
+        }
+        Divider()
+        Button { library.copyPhotos([p], kind: .asShown) } label: { Label("Copy", systemImage: "doc.on.doc") }
+        Button { library.addToPhotos([p.id]) } label: { Label("Add to Photos", systemImage: "photo.badge.plus") }
+        if p.rawCompanion != nil {
+            Button { library.copyPhotos([p], kind: .raw) } label: { Label("Copy RAW File", systemImage: "doc.on.doc.fill") }
+        }
+        if !library.savable([p.id]).isEmpty {
+            Button { Task { await saveOriginals([p.id]) } } label: {
+                Label("Save to Original", systemImage: "square.and.arrow.down")
+            }
+        }
+        if library.hasBackup(p) {
+            Button { library.restoreOriginals([p.id]) } label: {
+                Label("Restore Original", systemImage: "clock.arrow.circlepath")
+            }
+        }
+        Button(role: .destructive) { library.resetToOriginal([p.id]) } label: {
+            Label("Reset Decision", systemImage: "arrow.counterclockwise")
+        }
+        Divider()
+        Button(role: .destructive) { library.requestDelete([p.id]) } label: {
+            Label("Delete", systemImage: "trash")
+        }
+    }
+
+    private func saveOriginals(_ ids: [String]) async {
+        let r = await library.saveToOriginals(ids)
+        library.toast = r.failed.isEmpty ? (r.saved == 1 ? "Saved to original" : "Saved \(r.saved) originals") : "Saved \(r.saved), \(r.failed.count) failed"
     }
 }

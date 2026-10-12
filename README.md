@@ -6,7 +6,7 @@
 
 **Preview, level, crop. Nothing else.**
 
-A minimalist photo app for Mac and iPhone: flip through a folder or a memory card ultra fast,<br>
+A minimalist photo app for Mac, iPhone and iPad: flip through a folder or a memory card ultra fast,<br>
 straighten crooked horizons in a keystroke, and crop. Native Swift, on-device, nothing uploaded. Your originals stay safe.
 
 [![Swift](https://img.shields.io/badge/Swift-native-F05138?style=flat-square&logo=swift&logoColor=white)](https://swift.org)
@@ -145,6 +145,10 @@ straighten crooked horizons in a keystroke, and crop. Native Swift, on-device, n
 | | | Grid: <kbd>Space</kbd> | Quick look (floating) |
 
 On iPhone: tap a photo to open it (it zooms out of its tile), touch both ends of the horizon, tap ✂︎ to crop, swipe for the next photo, long-press a tile for a preview and the status menu, ⋯ ▸ History to see and revert everything done in the folder (swipe left on an entry).
+
+On iPad: the photo list (or grid) and the editor sit side by side, like the Mac; a narrow Split View window gets the iPhone layout. Each window holds its own folder, so two can sit side by side (Recent ▸ right-click ▸ <i>Open in New Window</i>). With a keyboard: <kbd>←</kbd> <kbd>→</kbd> (and <kbd>↑</kbd> <kbd>↓</kbd>) change photos, <kbd>Space</kbd> original ⇄ result, <kbd>L</kbd> / <kbd>K</kbd> / <kbd>U</kbd> / <kbd>F</kbd>, <kbd>R</kbd> level tool, <kbd>C</kbd> crop, <kbd>↵</kbd> / <kbd>Esc</kbd>, <kbd>⌫</kbd> Trash, <kbd>⌘C</kbd>, <kbd>⌘Z</kbd>, <kbd>⌘O</kbd> (hold <kbd>⌘</kbd> to see them). With a pointer: hover the chip to preview, right-click for the menu, drag a photo out to another app.
+
+<img src="docs/screens/ipad-portrait.png" alt="Photo Minimalist on iPad: a sidebar with the folder Iceland, tabs All · Tilted · Edited · ♥ and a list of tilted photos, next to the selected photo with a 'Tilted −1.8° · Level' chip" width="100%">
 
 ## Fast on memory cards
 

@@ -36,6 +36,27 @@ The owner should never have to ask twice. For **any** feature, fix or design cha
    ```
 7. **Update the parity table** below and the README.
 
+## iPad
+
+Same target and code as the iPhone (`iOS/`); the layout follows the window's width.
+
+- **Regular width** (full screen, big Split View / Stage Manager windows): two panes (`iOS/PadLayout.swift`).
+  `NavigationSplitView`: sidebar (folder name + ⋯, tabs All · Tilted · Edited · ♥, List | Grid, frozen list order per
+  tab like the Mac, selected row/tile highlighted) and the editor (`EditorView(pad:)`): sidebar button instead of
+  the close chevron, no full-screen cover, swipes still change photos, settings as a popover, info card over the photo.
+- **Compact width** (iPhone, narrow Split View, Slide Over): exactly the iPhone UI. The switch is
+  `RootView.twoPane` (iPad idiom + regular size class), so iPhone Plus/Max landscape never gets two panes.
+- **Windows**: one `Library` per scene (`SceneRoot`), folder kept per window in `@SceneStorage` (bookmark), else the
+  last folder; a new window whose last folder is already open elsewhere shows the start page (`OpenFolders`).
+  `WindowGroup(for: FolderLink.self)` + `openWindow(value:)` for "Open in New Window".
+- **Keyboard** (`iOS/PadCommands.swift`, menu commands via `@FocusedValue`): ←/→ previous / next, ↑/↓ (grid: a row),
+  Space original ⇄ result, I info, L level, K keep, U undecided, F favorite, R level tool, C crop, ↵ done (crop,
+  "level along this line", level tool), Esc cancel, ⌫ / ⌘⌫ Move to Trash (confirmation), ⌘C copy photo (text fields
+  keep their own Cut / Copy / Paste), ⌘Z / ⇧⌘Z, ⌘O open folder. Disabled while History / Settings / the delete alert is up.
+- Simulator: "iPad Pro 13-inch (M5)" `427D9A6E-F1C9-44C3-A409-9535F3E42AF5` (iOS 26.5). Copy `Documents/Iceland` from
+  the iPhone sim's container, launch with `-openFolder <container>/Documents/Iceland`; `-ipad.sidebarGrid YES` starts
+  in grid view. simctl can't rotate the device, so screenshots are portrait.
+
 ## Design
 
 Minimal, monochrome, Notion / Apple-like on both platforms: no colored badges, no title bar or big headers (on the Mac the folder name is its tab in the thin top bar; the list header is just the filter tabs), extras behind one "⋯" (or the view menu). Light and dark follow the system.
@@ -47,8 +68,8 @@ Detections are **suggestions only**. Never level a photo the owner didn't decide
 | Feature | Mac | iPhone |
 |---|---|---|
 | After Level / Keep: stay on the photo and show the result (default); "next photo after a decision" is an opt-in setting. A plain click in the full-width list opens the preview | ✓ (Settings ▸ Review) | ✓ (settings sheet); the editor no longer closes itself |
-| Open folder | ⌘O (several at once), drop folder | Files picker |
-| Several folders open | our own tab strip in a 38 pt top bar above sidebar + preview (`App/FolderWindows.swift`: `FolderTabs` per window, one Library per tab, `TopBar`; native window tabbing is off; menus use the selected tab via `@FocusedValue(\.library)` / `\.folderTabs`). Bar: ◨ preview toggle · square tabs (× on hover, middle-click closes, drag to reorder) · + (folder picker into a new tab, or this one if empty) · “checking n of N” · ⋯. ⌘T new tab, ⌘W closes the tab (saved; the last tab becomes the start page), ⇧⌘W closes the window, ⌘1…9, ⌃Tab / ⌃⇧Tab, ⌘⇧] / ⌘⇧[. ⌘O / drop / card "Open" use this tab if empty else a new tab; an already-open folder just selects its tab; eject closes the card's tabs. Window buttons are re-centred in the taller bar (`TrafficLights`); empty bar drags / double-click zooms (`WindowDragArea`) | no tabs (no room): last 5 folders as security-scoped bookmarks (`iOS/RecentFolders.swift`): "Recent" on the start screen, ⋯ → "Switch folder" (saves the current folder first) |
+| Open folder | ⌘O (several at once), drop folder | Files picker; iPad: ⌘O, drop a folder from Files on the window |
+| Several folders open | our own tab strip in a 38 pt top bar above sidebar + preview (`App/FolderWindows.swift`: `FolderTabs` per window, one Library per tab, `TopBar`; native window tabbing is off; menus use the selected tab via `@FocusedValue(\.library)` / `\.folderTabs`). Bar: ◨ preview toggle · square tabs (× on hover, middle-click closes, drag to reorder) · + (folder picker into a new tab, or this one if empty) · “checking n of N” · ⋯. ⌘T new tab, ⌘W closes the tab (saved; the last tab becomes the start page), ⇧⌘W closes the window, ⌘1…9, ⌃Tab / ⌃⇧Tab, ⌘⇧] / ⌘⇧[. ⌘O / drop / card "Open" use this tab if empty else a new tab; an already-open folder just selects its tab; eject closes the card's tabs. Window buttons are re-centred in the taller bar (`TrafficLights`); empty bar drags / double-click zooms (`WindowDragArea`) | iPhone: no tabs (no room). iPad: one folder per window (Split View / Stage Manager), "Open in New Window" on Recent rows and in ⋯ ▸ Open in New Window. Both: last 5 folders as security-scoped bookmarks (`iOS/RecentFolders.swift`): "Recent" on the start screen, ⋯ → "Switch folder" (saves the current folder first) |
 | Crop: Original/Free/1:1/4:5/3:2/16:9 (flip ⟲), corners/edges/move, with leveling; in thumbnails, export, save, copy, history | C or crop button, ↵ / Esc | crop button, Done / Reset |
 | RAW + JPEG pairs shown as one (the JPEG), "+ RAF" tag | ✓ list + grid, setting in panel | ✓ grid + peek, setting in sheet |
 | Tabs: All · Tilted (confident tilt, undecided; enum case `.review`) · Edited (leveled or cropped) · ♥. Keep as shot just leaves Suggested; no Kept tab | ✓ | ✓ |
@@ -66,13 +87,16 @@ Detections are **suggestions only**. Never level a photo the owner didn't decide
 | Level tool (`Library.levelTool`, like crop mode): headline, As shot \| Leveled switch, ruler, dashed line, guide + loupes, two-point picker; stays open across photos | R, level button next to crop, Photo menu "Level Tool"; ↵ / Esc done (Esc clears a pick first) | level button next to crop; Done. Trash moved to the settings button's long-press + settings sheet |
 | Level / Keep / Undecided (decision switch in the level tool; decided photos show "Leveled −1.3°" / "Cropped 4:5" quietly) | L / K / U, switch; status text in the top row | switch, long-press menu |
 | Change status from the list, grid or preview (same menu everywhere) | right-click (list, grid, and the photo in the preview) | long-press in the grid; in the editor the top bar + settings ▸ This photo (a long-press menu on the photo would fight swipes and the chip) |
-| Photo list + optional preview | ✓ (preview can be hidden) | n/a: no room; grid → full-screen editor |
+| Photo list + optional preview | ✓ (preview can be hidden) | iPhone: n/a, no room; grid → full-screen editor. **iPad (regular width): sidebar list / grid + editor side by side** (see "iPad" below) |
+| iPad keyboard (Photo menu, ⌘-hold overlay) | (the Mac's own shortcuts) | ←→ ↑↓ (grid: by a row), Space, I, L / K / U, F, R, C, ↵ / Esc, ⌫ / ⌘⌫, ⌘C, ⌘Z / ⇧⌘Z, ⌘O; iPhone with a keyboard gets them too |
+| Pointer | native | iPad: hover highlight on buttons / rows / tiles; hovering the chip previews the leveled photo (like the Mac); right-click = the long-press menu |
+| Drag a photo out | — | iPad: drag a row / tile to another app (the original file) |
 | Photo info (`Core/PhotoInfo.swift`: date taken, camera · lens, focal (35 mm eq.), aperture, shutter, ISO, pixels, file + RAW size, orientation; header-only read, `Photo.info` cached in the json; read lazily for visible rows/tiles via the ReadGate (`Library.fillInfo`, `Shared/PhotoDetails.swift`) and during the background check when it opens the JPEG itself, i.e. no RAW twin) | full-width list (preview hidden): Finder-like columns Date taken · Camera · lens · Exposure · Size · Edits with a header, dropping out as the window narrows (`App/PhotoInfoViews.swift`); with the preview: one extra line under the status; preview: Info card bottom-left (I or ⓘ in the top row). No column sorting (the list order is the review order) | editor: tap the "3 / 120 ⓘ" counter for a details sheet (no room for another icon); long-press peek: date + exposure line under the name; grid cells read info after their thumbnail |
 | Quick look (grid only; arrows move like the grid, ↑↓ by a row) | Space in the grid: floating card, fade + gentle scale (≈0.25 s), opens with the cached image | long-press: floating preview + status menu |
 | Opening a photo | preview pane / quick look | zoom out of the tile (iOS 18+), opens with the cached image |
 | Full-window editing | the preview pane | tap a photo |
 | Customizable control bar (`Shared/PhotoControls.swift`: `PhotoControl` catalogue (id, title, symbol, shortcut hint); actions run through each view's existing functions, shortcuts work whether or not a control is shown). Overflow goes into a trailing menu, never wraps | preview top row (`PhotoView.controlBar`), `photoControls` (default Level, Crop, Favorite, Original ⇄ result, Info, History, View options) + `photoControlsLabels` (icon only by default). Right-click the row, ⋯ ▸ or View ▸ "Customize Controls…" → Finder-like sheet (`App/ControlBar.swift`): drag to reorder, − / drag out, + / drag in, Show labels, Restore Defaults. Overflow: "»" menu (measured width; the name keeps its room) | Settings sheet ▸ "Editor buttons": toggles + Edit to reorder, `ios.photoControls` (default eye, ♥, undo, crop, level). Close, the counter (= Info) and Settings always stay; overflow → ⋯ in the top bar. Not on iPhone: Compare (missing), Export (folder-wide from the grid), Info / View options (fixed) |
-| Settings | side panel (S or sliders button), slides in/out | bottom panel (sliders button), swipe down to close: Level (suggested horizon, guide) · View (lines, fill) · This photo (… History, Move to Trash) · General · Review order · Appearance last. No loupes toggle (iPhone has no loupes) |
+| Settings | side panel (S or sliders button), slides in/out | iPad two-pane: popover from the sliders button; History is a form sheet; Info is the Mac's card over the photo (ⓘ / I). iPhone: bottom panel (sliders button), swipe down to close: Level (suggested horizon, guide) · View (lines, fill) · This photo (… History, Move to Trash) · General · Review order · Appearance last. No loupes toggle (iPhone has no loupes) |
 | Appearance: System / Light / Dark | Settings ▸ Appearance (whole app via NSApp.appearance) | Settings ▸ Appearance (preferredColorScheme) |
 | See the original ⇄ result | Space in the preview (toggle), hold M | tap the eye (toggle) |
 | Two-point leveling, Notes-style: thin line, magnifier while holding, two magnifiers after, drag ends to fine-tune, confirm to apply (level tool only) | ✓ (↵ / Esc); clicking the photo does nothing outside the tool | ✓ (button); outside the tool swipes always change photos |
@@ -84,7 +108,7 @@ Detections are **suggestions only**. Never level a photo the owner didn't decide
 | Compare overlay / side by side / split | ✓ | **missing** (hold for original only) |
 | History with jump-back (per photo) | ✓ popover (clock button), "Show all activity…" at its bottom | **missing** (undo only; the folder History below has "This photo") |
 | Folder activity history ("git log"): append-only `.horizonleveler-history.jsonl` in the folder (read-only card → `Application Support/HorizonLeveler/history/<sha256 of path>.jsonl`), one JSON line per action (decisions, corrections, crop + versions, ♥, delete / put back, save / restore original, Photos, export, undo / redo, revert), written off the main thread from `Library` (`Shared/Journal.swift`, extension at the end of `App/Library.swift`), read newest-first a page at a time. Revert = new undoable step back to the entry's `before` (warns if the photo changed later); delete → files back from the Trash ("Already emptied from the Trash" otherwise); save to original → restore original; Photos / export not revertible | View ▸ History (⌘Y): sheet 520×640 (`Shared/ActivityView.swift`), by day, search, "Only this photo", hover Revert / Show, right-click | ⋯ ▸ History (grid) and editor settings ▸ History ("This photo"): sheet, search, swipe-left Revert, tap = show photo |
-| Undo / redo | ⌘Z / ⇧⌘Z | undo button |
+| Undo / redo | ⌘Z / ⇧⌘Z | undo button; iPad keyboard ⌘Z / ⇧⌘Z |
 | Multi-selection (decide / ♥ / copy / delete act on all selected) | list + grid: ⌘-click toggle, ⇧-click range, ⌘A; the opened photo stays the single "current" one | grid "Select" mode: tap to check, bottom bar Favorite / Level / Delete / Done |
 | Move to Trash (file + RAW twin, `trashItem`; backups untouched; never a permanent delete) and undo (files moved back, photo reinserted with its edits, reselected; taken path or missing file → skipped + toast) | Delete / ⌘⌫ in list, grid, preview; right-click; NSAlert with "Don't ask again"; ⌘Z | long-press "Delete", editor trash button, Select bar; dialog with "Don't ask again"; toast "Moved 3 to the Trash · Undo" (5 s) + editor undo; no Trash on the provider → hidden `.horizonleveler-trash/` |
 | "Ask before deleting" (`confirmDelete`) | settings panel | settings sheet |

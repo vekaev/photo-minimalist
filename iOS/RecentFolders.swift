@@ -66,6 +66,8 @@ final class RecentFolders {
 /// "Switch folder" in the grid's ⋯ menu.
 struct SwitchFolderMenu: View {
     @Environment(Library.self) private var library
+    @Environment(\.supportsMultipleWindows) private var multipleWindows
+    @Environment(\.openWindow) private var openWindow
     private var recents = RecentFolders.shared
 
     var body: some View {
@@ -76,6 +78,14 @@ struct SwitchFolderMenu: View {
                     Button { recents.open(item, in: library) } label: { Label(item.name, systemImage: "folder") }
                 }
             } label: { Label("Switch folder", systemImage: "arrow.left.arrow.right") }
+            // iPad: another window, so two folders can sit side by side.
+            if multipleWindows {
+                Menu {
+                    ForEach(others) { item in
+                        Button { openWindow(value: FolderLink(item)) } label: { Label(item.name, systemImage: "folder") }
+                    }
+                } label: { Label("Open in New Window", systemImage: "macwindow.badge.plus") }
+            }
         }
     }
 }
@@ -83,6 +93,8 @@ struct SwitchFolderMenu: View {
 /// Recent folders on the start screen: plain rows, hairline separated.
 struct RecentFoldersList: View {
     @Environment(Library.self) private var library
+    @Environment(\.supportsMultipleWindows) private var multipleWindows
+    @Environment(\.openWindow) private var openWindow
     private var recents = RecentFolders.shared
 
     var body: some View {
@@ -101,7 +113,11 @@ struct RecentFoldersList: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .hoverEffect(.highlight)
                     .contextMenu {
+                        if multipleWindows {
+                            Button { openWindow(value: FolderLink(item)) } label: { Label("Open in New Window", systemImage: "macwindow.badge.plus") }
+                        }
                         Button(role: .destructive) { recents.remove(item) } label: { Label("Remove from Recent", systemImage: "minus.circle") }
                     }
                     if item != recents.items.last { Ink.rule.frame(height: Ink.hairline) }

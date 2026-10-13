@@ -798,9 +798,13 @@ private struct GridPage: View {
         .contextMenu { StatusMenu(ids: library.selection.contains(p.id) ? Array(library.selection) : [p.id]) }
     }
 
+    /// Open a photo: from the full-window grid ("home") the preview comes back beside the grid, which stays a grid.
     private func open(_ id: String) {
         library.openedID = id
-        if !inSidebar { mode = .list }
+        library.selection = [id]
+        if let showPreview, !showPreview.wrappedValue {
+            withAnimation(.easeOut(duration: 0.2)) { showPreview.wrappedValue = true }
+        }
     }
 
     private func click(_ id: String) {
@@ -813,8 +817,9 @@ private struct GridPage: View {
         } else if flags.contains(.shift), let a = anchor, let i = ids.firstIndex(of: a), let j = ids.firstIndex(of: id) {
             library.selection = Set(ids[min(i, j)...max(i, j)])
         } else {
-            library.selection = [id]; anchor = id
-            if inSidebar { library.openedID = id }
+            anchor = id
+            // One click opens it: in the sidebar it shows in the preview, from home it brings the preview back.
+            open(id)
         }
     }
 

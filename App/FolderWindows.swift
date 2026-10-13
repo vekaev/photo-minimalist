@@ -144,12 +144,16 @@ private struct TopBar: View {
     var body: some View {
         HStack(spacing: 0) {
             Button { showPreview.toggle() } label: {
-                Image(systemName: "sidebar.right").frame(width: 28, height: 26).contentShape(Rectangle())
-                    .foregroundStyle(showPreview && library.folder != nil ? .primary : .secondary)
+                // Shows where it takes you: home (the full grid / list) while a photo is open beside the list,
+                // the sidebar (list + preview) from the full view.
+                Image(systemName: showPreview ? "house" : "sidebar.right")
+                    .frame(width: 28, height: 26).contentShape(Rectangle())
+                    .foregroundStyle(library.folder != nil ? .primary : .secondary)
+                    .contentTransition(.symbolEffect(.replace))
             }
             .buttonStyle(.plain)
             .disabled(library.folder == nil)
-            .help(showPreview ? "Hide preview (Space still opens a photo)" : "Show preview")
+            .help(showPreview ? "Home: all photos, full window (Space still opens a photo)" : "Show the preview beside the list")
             Theme.line.frame(width: 1, height: 16).padding(.horizontal, 8)
             // Only as wide as the tabs, so the rest of the bar still drags the window; scrolls when crowded.
             ViewThatFits(in: .horizontal) {

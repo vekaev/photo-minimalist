@@ -400,6 +400,8 @@ struct PhotoList: View {
                         }
                         .padding(8)
                     }
+                    // Appearing beside the preview (e.g. a photo opened from the full grid): start at that photo.
+                    .onAppear { centerSidebar(on: library.openedID, proxy) }
                     .onChange(of: library.openedID) { _, id in
                         // Follow keyboard moves (↑↓, decisions); a clicked row is already in view.
                         defer { clicked = nil }
@@ -741,6 +743,8 @@ private struct GridPage: View {
                         }
                         .padding(pad)
                     }
+                    // Opened from the full grid ("home"): the sidebar starts at that photo, not at the top.
+                    .onAppear { centerSidebar(on: library.openedID, proxy) }
                     // Scroll only when the arrow keys moved the selection; a click is already on screen.
                     .onChange(of: scrollTarget) { _, id in
                         if let id { withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id) } }
@@ -888,4 +892,10 @@ private struct SidebarDivider: View {
             .onTapGesture { if (NSApp.currentEvent?.clickCount ?? 1) >= 2 { width = 320 } }
             .zIndex(1)
     }
+}
+
+/// Scrolls a sidebar (list or grid) so the open photo sits in the middle, once its rows exist.
+@MainActor func centerSidebar(on id: String?, _ proxy: ScrollViewProxy) {
+    guard let id else { return }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { proxy.scrollTo(id, anchor: .center) }
 }

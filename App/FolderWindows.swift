@@ -105,6 +105,9 @@ struct FolderWindow: View {
         .focusedSceneValue(\.folderTabs, tabs)
         .navigationTitle(library.folder?.lastPathComponent ?? "Photo Minimalist")
         .background(WindowAccessor { window in WindowRouter.shared.attach(window, to: tabs) })
+        // F and ⌘⌫ work wherever keyboard focus is in this window (sidebar grid, preview, a clicked control),
+        // not only when a particular view happens to hold focus.
+        .background(CanvasEvents { e, _ in Self.photoKey(e, library) })
         .onAppear { WindowRouter.shared.appeared(tabs) }
         .onChange(of: library.folder) { WindowRouter.shared.persist() }
         .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
@@ -114,6 +117,22 @@ struct FolderWindow: View {
             WindowRouter.shared.terminating()
             for l in tabs.tabs { l.saveNow() }
         }
+    }
+
+    /// F = favorite, ⌘⌫ = Move to Trash (asks first, with "Don't ask again", unless that was turned off).
+    /// Acts on the open photo, or the grid's selection, like the Photo and Edit menus. A text field keeps its keys.
+    static func photoKey(_ e: NSEvent, _ library: Library) -> Bool {
+        guard e.type == .keyDown, !e.isARepeat, library.folder != nil, !(e.window?.firstResponder is NSTextView) else { return false }
+        let mods = e.modifierFlags.intersection([.command, .option, .control, .shift])
+        let targets = library.copyTargets(preferOpened: library.quickLook || UserDefaults.standard.string(forKey: "viewMode") != "grid").map(\.id)
+        guard !targets.isEmpty else { return false }
+        if mods.isEmpty, e.charactersIgnoringModifiers?.lowercased() == "f" {
+            library.toggleFavorite(targets); return true
+        }
+        if mods == .command, e.keyCode == 51 || e.keyCode == 117 {     // ⌘⌫ / ⌘⌦
+            library.requestDelete(targets); return true
+        }
+        return false
     }
 
     /// Settings are app-wide preferences: a change made in one tab shows up in the others.

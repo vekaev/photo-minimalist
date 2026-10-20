@@ -6,7 +6,7 @@ import Foundation
 /// existing functions (`PhotoView.perform`, `EditorView.perform`). Keyboard shortcuts work whether or not a
 /// control is in the bar.
 enum PhotoControl: String, CaseIterable, Identifiable {
-    case level, crop, favorite, original, info, history, compare, copy, save, export, trash, photos, undo, viewOptions
+    case level, crop, adjust, favorite, original, info, history, compare, copy, save, export, trash, photos, undo, viewOptions
     /// Film scan fixes (shutter bands): only while Settings ▸ Advanced ▸ "Film scan fixes" is on; never a default.
     case fixes
 
@@ -19,6 +19,7 @@ enum PhotoControl: String, CaseIterable, Identifiable {
         switch self {
         case .level: return "Level Tool"
         case .crop: return "Crop"
+        case .adjust: return "Adjust"
         case .favorite: return "Favorite"
         case .original: return "Original ⇄ Result"
         case .info: return "Info"
@@ -54,6 +55,7 @@ enum PhotoControl: String, CaseIterable, Identifiable {
         switch self {
         case .level: return "level"
         case .crop: return "crop"
+        case .adjust: return "sun.max"
         case .favorite: return "heart"
         case .original: return "eye"
         case .info: return "info.circle"
@@ -75,6 +77,7 @@ enum PhotoControl: String, CaseIterable, Identifiable {
         switch self {
         case .level: return "R"
         case .crop: return "C"
+        case .adjust: return "E"
         case .favorite: return "F"
         case .original: return "Space"
         case .info: return "I"
@@ -107,9 +110,30 @@ enum PhotoControl: String, CaseIterable, Identifiable {
     static let macLabelsKey = "photoControlsLabels"
     static let phoneKey = "ios.photoControls"
 
-    static let macDefault: [PhotoControl] = [.level, .crop, .favorite, .original, .info, .history, .viewOptions]
-    /// What the iPhone editor showed before it was customizable.
-    static let phoneDefault: [PhotoControl] = [.original, .favorite, .undo, .crop, .level]
+    static let macDefault: [PhotoControl] = [.level, .crop, .adjust, .favorite, .original, .info, .history, .viewOptions]
+    /// What the iPhone editor showed before it was customizable, plus Adjust after Crop.
+    static let phoneDefault: [PhotoControl] = [.original, .favorite, .undo, .crop, .adjust, .level]
+
+    /// Controls added to the defaults after a version shipped: put once into lists people already customized (right
+    /// after `after`, else at the end), so a new default control shows up without "Restore Defaults".
+    private static let added: [(control: PhotoControl, after: PhotoControl, flag: String)] = [
+        (.adjust, .crop, "photoControls.added.adjust"),
+    ]
+
+    static func migrateStoredLists(_ defaults: UserDefaults = .standard) {
+        for (key, platform) in [(macKey, Platform.mac), (phoneKey, Platform.phone)] {
+            for a in added {
+                let flag = a.flag + "." + key
+                guard !defaults.bool(forKey: flag) else { continue }
+                defaults.set(true, forKey: flag)
+                guard let raw = defaults.string(forKey: key) else { continue }   // never customized: the default has it
+                var list = parse(raw, on: platform)
+                guard !list.contains(a.control) else { continue }
+                if let i = list.firstIndex(of: a.after) { list.insert(a.control, at: i + 1) } else { list.append(a.control) }
+                defaults.set(serialize(list), forKey: key)
+            }
+        }
+    }
 
     static func defaultValue(_ platform: Platform) -> String { serialize(platform == .mac ? macDefault : phoneDefault) }
 

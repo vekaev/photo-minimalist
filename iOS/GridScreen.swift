@@ -42,7 +42,7 @@ struct GridScreen: View {
                                     PhotoContextMenu(photo: p)
                                 } preview: {
                                     // The iPhone counterpart of the Mac's floating quick look.
-                                    Peek(photo: p, note: library.note(for: p))
+                                    Peek(photo: p, note: library.statusNote(for: p) ?? library.note(for: p))
                                 }
                         }
                         } header: {
@@ -149,6 +149,7 @@ struct GridScreen: View {
         return HStack(spacing: 0) {
             barButton("heart", "Favorite") { library.toggleFavorite(ids) }
             barButton("level", "Level") { library.decide(ids, .level) }
+            barButton("sun.max", "Auto Light") { library.autoLight(ids) }
             barButton("trash", "Delete") { library.requestDelete(ids) }
             Button { withAnimation(.easeOut(duration: 0.15)) { selecting = false; picked = [] } } label: {
                 Text("Done").font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 50)
@@ -202,7 +203,7 @@ struct Cell: View {
                     Color.clear
                         .aspectRatio(Geometry.finalAspect(CGFloat(image.width) / CGFloat(image.height), crop: photo.appliedCrop),
                                      contentMode: thumbFill ? .fill : .fit)
-                        .overlay { EditedImage(image: image, rotation: photo.appliedCorrection, crop: photo.appliedCrop, fix: photo.bandFixSource) }
+                        .overlay { EditedImage(image: image, rotation: photo.appliedCorrection, crop: photo.appliedCrop, fix: photo.bandFixSource, light: photo.lightSource) }
                         .clipped()
                 }
             }
@@ -274,7 +275,7 @@ final class Exporter {
 
     func run(_ library: Library) {
         guard let folder = library.folder else { return }
-        let jobs = library.toExport.map { (id: $0.id, url: $0.url, degrees: $0.appliedCorrection, crop: $0.appliedCrop, band: $0.bandFix) }
+        let jobs = library.toExport.map { (id: $0.id, url: $0.url, degrees: $0.appliedCorrection, crop: $0.appliedCrop, band: $0.bandFix, light: $0.light) }
         let dest = folder.appendingPathComponent("leveled", isDirectory: true)
         running = true; done = 0; total = jobs.count; message = nil
         Task {
@@ -284,7 +285,7 @@ final class Exporter {
             for job in jobs {
                 let out = dest.appendingPathComponent(job.id).deletingPathExtension().appendingPathExtension("jpg")
                 let ok = await Task.detached(priority: .userInitiated) {
-                    (try? Renderer.export(source: job.url, degrees: job.degrees, crop: job.crop, bandFix: job.band,
+                    (try? Renderer.export(source: job.url, degrees: job.degrees, crop: job.crop, bandFix: job.band, light: job.light,
                                           to: out, format: .jpeg, quality: 0.95)) != nil
                 }.value
                 if !ok { failed += 1 } else { exported.append(job.id) }
@@ -310,7 +311,7 @@ struct Peek: View {
                 if let image {
                     Color.clear
                         .aspectRatio(Geometry.finalAspect(CGFloat(image.width) / CGFloat(image.height), crop: photo.appliedCrop), contentMode: .fill)
-                        .overlay { EditedImage(image: image, rotation: photo.appliedCorrection, crop: photo.appliedCrop, fix: photo.bandFixSource) }
+                        .overlay { EditedImage(image: image, rotation: photo.appliedCorrection, crop: photo.appliedCrop, fix: photo.bandFixSource, light: photo.lightSource) }
                 }
             }
             .frame(width: 340, height: 227)
@@ -434,6 +435,11 @@ struct PhotoContextMenu: View {
         Button { library.decide([p.id], .undecided) } label: { Label("Undecided", systemImage: "circle.dashed") }
         Button { library.toggleFavorite([p.id]) } label: {
             Label(p.favorite ? "Unfavorite" : "Favorite", systemImage: p.favorite ? "heart.slash" : "heart")
+        }
+        Divider()
+        Button { library.autoLight([p.id]) } label: { Label("Auto Light", systemImage: "sun.max") }
+        if p.light != nil {
+            Button { library.resetLight([p.id]) } label: { Label("Reset Light", systemImage: "sun.min") }
         }
         Divider()
         Button { library.copyPhotos([p], kind: .asShown) } label: { Label("Copy", systemImage: "doc.on.doc") }

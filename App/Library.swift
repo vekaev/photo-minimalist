@@ -1,6 +1,7 @@
 #if os(macOS)
 import AppKit
 #endif
+import CoreGraphics
 import Foundation
 import Observation
 import os
@@ -15,7 +16,10 @@ final class Library {
     var filter: Filter = .review
     var selection: Set<String> = []
     /// Photo shown in the single-photo view; nil shows the grid.
-    var openedID: String?
+    var openedID: String? {
+        // Remembered per folder, so a relaunch (or reopening the folder) comes back to this photo.
+        didSet { if let id = openedID, let folder { Self.rememberLastPhoto(id, in: folder) } }
+    }
     /// Order used for prev/next in the single-photo view, frozen when it opens so decisions don't reshuffle it.
     var navigation: [String] = []
 
@@ -137,7 +141,7 @@ final class Library {
                 }
                 return a.offset < b.offset
             }.map(\.element)
-        case .leveled: return photos.filter { $0.decision == .level || $0.bandFix != nil }
+        case .leveled: return photos.filter { $0.decision == .level || $0.hasAdjustments }
         case .kept: return photos.filter { $0.decision == .keep }
         case .favorites: return photos.filter(\.favorite)
         case .all: return photos
@@ -171,6 +175,23 @@ final class Library {
             guard hasSuggestion(p), let d = p.detection else { return "As shot" }
             return "Tilted " + Geometry.format(d.angle)
         }
+    }
+
+    /// The quiet status in the preview's top row: the decision ("Leveled −1.3°", "Kept as shot") plus "Light" when the
+    /// light is adjusted; nil when there's nothing to say.
+    func statusNote(for p: Photo) -> String? {
+        var parts: [String] = []
+        if p.decision != .undecided { parts.append(note(for: p)) }
+        if p.light != nil { parts.append("Light") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// The list row's line: `note(for:)` plus "Light" when the light is adjusted.
+    func listNote(for p: Photo) -> String {
+        let base = note(for: p)
+        guard p.light != nil else { return base }
+        if p.decision == .undecided, p.analyzed, !hasSuggestion(p) { return "Light" }
+        return base + " · Light"
     }
 
     /// 0 = confident tilt, 2 = no suggestion. Based on the detection only, so a photo doesn't jump when you decide it.
@@ -263,6 +284,34 @@ final class Library {
         importFinderFavorites()
         #endif
         analyze()
+        restoreLastPhoto()
+    }
+
+    // MARK: Last photo per folder
+
+    private static let lastPhotoKey = "lastPhotoByFolder"
+
+    private static func rememberLastPhoto(_ id: String, in folder: URL) {
+        var all = UserDefaults.standard.dictionary(forKey: lastPhotoKey) as? [String: String] ?? [:]
+        guard all[folder.standardizedFileURL.path] != id else { return }
+        all[folder.standardizedFileURL.path] = id
+        UserDefaults.standard.set(all, forKey: lastPhotoKey)
+    }
+
+    private static func forgetLastPhoto(in folder: URL) {
+        var all = UserDefaults.standard.dictionary(forKey: lastPhotoKey) as? [String: String] ?? [:]
+        all[folder.standardizedFileURL.path] = nil
+        UserDefaults.standard.set(all, forKey: lastPhotoKey)
+    }
+
+    /// Opening a folder comes back to the photo that was open in it last time (if it's still there). When that
+    /// photo isn't in the default tab (Tilted), the folder opens on All so the photo and its neighbours are listed.
+    private func restoreLastPhoto() {
+        guard let folder,
+              let id = (UserDefaults.standard.dictionary(forKey: Self.lastPhotoKey) as? [String: String])?[folder.standardizedFileURL.path],
+              let p = byID[id] else { return }
+        if !belongs(p, to: filter) { filter = .all }
+        openPhoto(id)
     }
 
     /// The folder from last time: its bookmark if that still resolves, else the saved path.
@@ -443,6 +492,9 @@ final class Library {
             // From the untouched backup the earlier saved band fix has to be applied again (unless a new one replaces
             // it); from the current file only a new fix is applied (an earlier one is already in it).
             let band = fromBackup ? (p.bandFix ?? p.savedBandFix) : p.bandFix
+            // Light stacks: from the backup, the adjustments already written are applied again first, then the new one.
+            let light = p.light
+            let priorLights = fromBackup ? p.savedLights : []
             let source = p.url
             let format: ExportFormat = { switch source.pathExtension.lowercased() {
                 case "heic", "heif": return .heic
@@ -457,7 +509,7 @@ final class Library {
                     }
                     let temp = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString + "." + source.pathExtension)
                     try Renderer.export(source: fromBackup ? backup : source, degrees: total, crop: crop, bandFix: band,
-                                        to: temp, format: format, quality: 0.96)
+                                        light: light, priorLights: priorLights, to: temp, format: format, quality: 0.96)
                     _ = try fm.replaceItemAt(source, withItemAt: temp)
                     return nil
                 } catch { return error.localizedDescription }
@@ -466,8 +518,9 @@ final class Library {
             p.savedCorrection = fromBackup ? total : p.savedCorrection + total
             p.savedHadCrop = p.savedHadCrop || crop != nil
             if fromBackup { p.savedBandFix = band } else if band != nil { p.savedBandFix = band }
+            if let light { p.savedLights = priorLights + [light] } else if fromBackup { p.savedLights = priorLights }
             p.startFresh(label: "Saved to original " + Geometry.format(total) + (crop != nil ? " · cropped" : "")
-                         + (band != nil ? " · bands fixed" : ""))
+                         + (band != nil ? " · bands fixed" : "") + (light != nil ? " · light" : ""))
             ImageCache.shared.evict(p.url)
             BandFixStore.shared.evict(p.url)
             analyzedCount -= 1
@@ -501,6 +554,7 @@ final class Library {
                 _ = try FileManager.default.replaceItemAt(p.url, withItemAt: backup)
                 p.savedCorrection = 0
                 p.savedBandFix = nil
+                p.savedLights = []
                 p.startFresh(label: "Original restored")
                 ImageCache.shared.evict(p.url)
                 BandFixStore.shared.evict(p.url)
@@ -553,7 +607,7 @@ final class Library {
         switch f {
         case .all: return true
         case .review: return hasSuggestion(p)
-        case .leveled: return p.decision == .level || p.bandFix != nil
+        case .leveled: return p.decision == .level || p.hasAdjustments
         case .kept: return p.decision == .keep
         case .favorites: return p.favorite
         case .crops: return p.cropVersions.count >= 2
@@ -580,7 +634,7 @@ final class Library {
     /// The level tool is open in the preview (Mac) / editor (iPhone): headline, As shot | Leveled switch, ruler,
     /// guide line and the two-point picker. Closed, the preview is just the photo. R (Mac) or the level button.
     var levelTool = false {
-        didSet { if levelTool { fixesTool = false } }
+        didSet { if levelTool { fixesTool = false; adjustTool = false } }
     }
     /// Photos just leveled from the corner chip (or L), for ~4 s, so the chip can offer "Leveled · Undo" even after
     /// the view moved on to the next photo.
@@ -1127,7 +1181,96 @@ final class Library {
         if !selection.contains(id) { selection = [id] }
         quickLook = false
         levelTool = false
+        adjustTool = false
         fixesTool = true
+    }
+
+    // MARK: Light (exposure, brightness, contrast, highlights, shadows)
+
+    /// Mac: the Adjust tool is open in the preview (E); iPhone / iPad: the editor's light panel. Like the level tool it
+    /// stays open from photo to photo until Done.
+    var adjustTool = false {
+        didSet { if adjustTool { levelTool = false; fixesTool = false } }
+    }
+
+    /// Sets (or, with nil / all zero, removes) one photo's light adjustment as one undoable step.
+    func setLight(_ id: String, _ light: LightAdjust?, label: String? = nil) {
+        guard let p = byID[id] else { return }
+        let value = light?.normalized.nonIdentity
+        guard p.light != value else { return }
+        let before = journalStates([id])
+        p.record(p.decision, correction: p.correction, label: label ?? (value.map { "Light: " + $0.summary } ?? "Light reset"),
+                 light: .some(value))
+        commit([id], .light, before: before)
+    }
+
+    /// Removes the light adjustment from the photos that have one (one undo step).
+    func resetLight(_ ids: [String]) {
+        let items = ids.compactMap { byID[$0] }.filter { $0.light != nil }
+        guard !items.isEmpty else { toast = "No light adjustment to reset"; return }
+        let before = journalStates(items.map(\.id))
+        for p in items { p.record(p.decision, correction: p.correction, label: "Light reset", light: .some(nil)) }
+        commit(items.map(\.id), .light, before: before, summary: items.count == 1 ? nil : "Reset the light of \(items.count) photos")
+        toast = items.count == 1 ? "Light reset" : "Reset the light of \(items.count) photos"
+    }
+
+    /// Auto light: each photo's small preview is analysed (`LightAdjust.auto`, read through the ReadGate like any
+    /// on-screen thumbnail) and the result stored as one undo step for all of them. Well-exposed photos may get
+    /// nothing. `done` gets the photos' new values (the Adjust panel shows them).
+    func autoLight(_ ids: [String], done: (([String: LightAdjust?]) -> Void)? = nil) {
+        let items = ids.compactMap { byID[$0] }
+        guard !items.isEmpty else { return }
+        if items.count > 1 { toast = "Auto light on \(items.count) photos…" }
+        let jobs = items.map { ($0.id, $0.url, $0.rawCompanion) }
+        let folder = self.folder
+        Task { [weak self] in
+            var found: [String: LightAdjust] = [:]
+            await withTaskGroup(of: (String, LightAdjust?).self) { group in
+                var next = 0
+                func add() {
+                    let (id, url, raw) = jobs[next]
+                    next += 1
+                    group.addTask(priority: .userInitiated) {
+                        // The cached preview if there is one, else a small read (ImageCache waits for the ReadGate).
+                        let cached = ImageCache.shared.cached(for: url, sizes: [1200, 420, 360, 3000, 2400])
+                        let image: CGImage? = if let cached { cached } else { await ImageCache.shared.image(for: url, rawCompanion: raw, maxPixel: 420) }
+                        guard let image else { return (id, nil) }
+                        return (id, await Task.detached(priority: .userInitiated) { LightAdjust.auto(for: image) }.value)
+                    }
+                }
+                for _ in 0..<min(4, jobs.count) { add() }
+                for await (id, a) in group {
+                    if let a { found[id] = a }
+                    if next < jobs.count { add() }
+                }
+            }
+            guard let self, self.folder == folder else { return }
+            self.storeAutoLight(items.map(\.id), found)
+            done?(Dictionary(uniqueKeysWithValues: items.map { ($0.id, self.byID[$0.id]?.light) }))
+        }
+    }
+
+    private func storeAutoLight(_ ids: [String], _ found: [String: LightAdjust]) {
+        let changing = ids.compactMap { id -> (Photo, LightAdjust?)? in
+            guard let p = byID[id], let a = found[id] else { return nil }
+            let value = a.normalized.nonIdentity
+            return p.light == value ? nil : (p, value)
+        }
+        if !changing.isEmpty {
+            let before = journalStates(changing.map(\.0.id))
+            for (p, value) in changing {
+                p.record(p.decision, correction: p.correction, label: value.map { "Auto light: " + $0.summary } ?? "Auto light: no change",
+                         light: .some(value))
+            }
+            commit(changing.map(\.0.id), .light, before: before,
+                   summary: changing.count == 1 ? nil : "Auto light on \(changing.count) photos")
+        }
+        if ids.count == 1 {
+            toast = found.isEmpty ? "Couldn't read the photo" : (changing.isEmpty ? "Auto light: already looks right" : "Auto light")
+        } else {
+            let same = found.count - changing.count
+            toast = "Auto light on \(changing.count) photo\(changing.count == 1 ? "" : "s")" + (same > 0 ? " (\(same) already right)" : "")
+        }
     }
 
     // MARK: Navigation
@@ -1142,6 +1285,8 @@ final class Library {
     func closePhoto() {
         if let id = openedID { selection = [id] }
         openedID = nil
+        // Closed on purpose (iPhone editor ↓): next time the folder opens on the grid, not inside a photo.
+        if let folder { Self.forgetLastPhoto(in: folder) }
     }
 
     func step(_ delta: Int) {
@@ -1171,7 +1316,7 @@ final class Library {
 
     func saveNow() {
         guard let folder else { return }
-        let state = Dictionary(uniqueKeysWithValues: photos.filter { $0.analyzed || $0.history.count > 1 || $0.favorite || !$0.cropVersions.isEmpty || $0.info != nil || $0.savedBandFix != nil }.map { ($0.id, $0.saved) })
+        let state = Dictionary(uniqueKeysWithValues: photos.filter { $0.analyzed || $0.history.count > 1 || $0.favorite || !$0.cropVersions.isEmpty || $0.info != nil || $0.savedBandFix != nil || !$0.savedLights.isEmpty }.map { ($0.id, $0.saved) })
         guard let data = try? JSONEncoder().encode(state) else { return }
         try? data.write(to: folder.appendingPathComponent(Self.stateFileName), options: .atomic)
     }
@@ -1188,7 +1333,7 @@ extension Library {
         func box(_ r: CGRect) -> [Double] { [r.minX, r.minY, r.width, r.height].map { Double($0) } }
         return JournalState(d: p.decision, c: p.correction, crop: p.crop.map(box), fav: p.favorite ? true : nil,
                             versions: p.cropVersions.isEmpty ? nil : p.cropVersions.map { .init(id: $0.id, r: box($0.rect), ratio: $0.ratio) },
-                            chosen: p.chosenVersionID, band: p.bandFix)
+                            chosen: p.chosenVersionID, band: p.bandFix, light: p.light)
     }
 
     func journalStates(_ ids: [String]) -> [String: JournalState] {
@@ -1243,6 +1388,10 @@ extension Library {
         case .bandFix:
             guard let one else { return "Fixed bands on \(subject)" }
             return after[files[0]]?.band == nil ? "Removed the band fix from \(one)" : "Fixed bands on \(one)"
+        case .light:
+            guard let one else { return "Adjusted the light of \(subject)" }
+            guard let l = after[files[0]]?.light else { return "Reset the light of \(one)" }
+            return "Light on \(one): " + l.summary
         case .favorite: return "Favorited \(subject)"
         case .unfavorite: return "Unfavorited \(subject)"
         case .delete: return "Moved \(subject) to the Trash"
@@ -1358,7 +1507,7 @@ extension Library {
     @discardableResult
     func apply(_ s: JournalState, to p: Photo, label: String) -> Bool {
         let index = p.index, count = p.history.count
-        p.record(s.d, correction: s.c, label: label, crop: .some(s.cropRect), bandFix: .some(s.band))
+        p.record(s.d, correction: s.c, label: label, crop: .some(s.cropRect), bandFix: .some(s.band), light: .some(s.light))
         p.favorite = s.isFavorite
         let old = Dictionary(p.cropVersions.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         p.cropVersions = (s.versions ?? []).compactMap { v in

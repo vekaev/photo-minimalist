@@ -250,7 +250,7 @@ private struct PhotoInteractions: ViewModifier {
             .contextMenu {
                 PhotoContextMenu(photo: photo)
             } preview: {
-                Peek(photo: photo, note: library.note(for: photo))
+                Peek(photo: photo, note: library.statusNote(for: photo) ?? library.note(for: photo))
             }
             .onDrag {
                 // The original file (other apps get the photo as shot; Copy gives the leveled one).
@@ -274,7 +274,7 @@ private struct PadRow: View {
                     if let image {
                         Color.clear
                             .aspectRatio(Geometry.finalAspect(CGFloat(image.width) / CGFloat(image.height), crop: photo.appliedCrop), contentMode: .fill)
-                            .overlay { EditedImage(image: image, rotation: photo.appliedCorrection, crop: photo.appliedCrop, fix: photo.bandFixSource) }
+                            .overlay { EditedImage(image: image, rotation: photo.appliedCorrection, crop: photo.appliedCrop, fix: photo.bandFixSource, light: photo.lightSource) }
                     }
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 4))
@@ -290,7 +290,7 @@ private struct PadRow: View {
                         Image(systemName: "heart.fill").font(.system(size: 10, weight: .semibold)).foregroundStyle(.red)
                     }
                 }
-                Text(library.note(for: photo)).font(.caption)
+                Text(library.listNote(for: photo)).font(.caption)
                     .foregroundStyle(photo.decision == .undecided ? .secondary : .primary)
                     .lineLimit(1)
                 // A blank line until the header is read, so rows don't jump.

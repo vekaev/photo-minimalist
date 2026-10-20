@@ -14,6 +14,8 @@ enum JournalAction: String, Codable, Sendable {
     case crop, versionAdd, versionChoose, versionRemove
     /// Film scan fix (shutter bands): added, adjusted or removed.
     case bandFix
+    /// Light adjustment (exposure, brightness…): set, auto or reset.
+    case light
     case favorite, unfavorite
     case delete, restoreFromTrash
     case saveToOriginal, restoreOriginal
@@ -26,7 +28,7 @@ enum JournalAction: String, Codable, Sendable {
     }
 }
 
-/// A photo's edit state, compact: decision, correction, crop, ♥, crop versions.
+/// A photo's edit state, compact: decision, correction, crop, ♥, crop versions, band fix, light.
 struct JournalState: Codable, Equatable, Sendable {
     var d: Decision
     var c: Double
@@ -37,6 +39,8 @@ struct JournalState: Codable, Equatable, Sendable {
     var chosen: UUID?
     /// Film scan fix settings (shutter bands); nil = none.
     var band: BandFixSettings?
+    /// Light adjustment; nil = none.
+    var light: LightAdjust?
 
     struct Version: Codable, Equatable, Sendable {
         var id: UUID

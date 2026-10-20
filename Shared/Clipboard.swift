@@ -20,27 +20,27 @@ extension Library {
     /// Copies photos to the clipboard as files (paste into Finder, Messages, Slack…), plus image data for
     /// apps that only take pictures. Leveled photos are rendered at full quality into a temporary file first.
     func copyPhotos(_ photos: [Photo], kind: CopyKind) {
-        let jobs = photos.compactMap { p -> (url: URL, name: String, degrees: Double, crop: CGRect?, band: BandFixSettings?)? in
+        let jobs = photos.compactMap { p -> (url: URL, name: String, degrees: Double, crop: CGRect?, band: BandFixSettings?, light: LightAdjust?)? in
             switch kind {
-            case .raw: return p.rawCompanion.map { ($0, $0.lastPathComponent, 0, nil, nil) }
-            case .original: return (p.url, p.name, 0, nil, nil)
-            case .asShown: return (p.url, p.name, p.appliedCorrection, p.appliedCrop, p.bandFix)
+            case .raw: return p.rawCompanion.map { ($0, $0.lastPathComponent, 0, nil, nil, nil) }
+            case .original: return (p.url, p.name, 0, nil, nil, nil)
+            case .asShown: return (p.url, p.name, p.appliedCorrection, p.appliedCrop, p.bandFix, p.light)
             }
         }
         guard !jobs.isEmpty else {
             toast = kind == .raw ? "No RAW file next to this photo" : "Nothing selected"
             return
         }
-        let needsRender = jobs.contains { abs($0.degrees) >= 0.01 || $0.crop != nil || $0.band != nil }
+        let needsRender = jobs.contains { abs($0.degrees) >= 0.01 || $0.crop != nil || $0.band != nil || $0.light != nil }
         if needsRender { toast = jobs.count == 1 ? "Preparing leveled copy…" : "Preparing \(jobs.count) leveled copies…" }
         Task {
             let files: [URL] = await Task.detached(priority: .userInitiated) {
                 let dir = FileManager.default.temporaryDirectory
                     .appendingPathComponent("PhotoMinimalist-Copies/\(UUID().uuidString)", isDirectory: true)
                 return jobs.compactMap { job in
-                    guard abs(job.degrees) >= 0.01 || job.crop != nil || job.band != nil else { return job.url }
+                    guard abs(job.degrees) >= 0.01 || job.crop != nil || job.band != nil || job.light != nil else { return job.url }
                     let out = dir.appendingPathComponent(job.url.deletingPathExtension().lastPathComponent + ".jpg")
-                    return (try? Renderer.export(source: job.url, degrees: job.degrees, crop: job.crop, bandFix: job.band,
+                    return (try? Renderer.export(source: job.url, degrees: job.degrees, crop: job.crop, bandFix: job.band, light: job.light,
                                                  to: out, format: .jpeg, quality: 0.95)) != nil ? out : nil
                 }
             }.value

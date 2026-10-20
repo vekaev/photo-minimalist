@@ -3,6 +3,8 @@ import UniformTypeIdentifiers
 
 @main
 struct HorizonApp: App {
+    init() { PhotoControl.migrateStoredLists() }
+
     var body: some Scene {
         // One Library per scene (window), like the Mac's one folder per tab: on iPad two folders can sit side by
         // side in Split View / Stage Manager. The value is set when a folder opens "in a new window".

@@ -15,6 +15,7 @@ struct EditorKeys {
     var showOriginal = false
     var cropMode = false
     var levelMode = false
+    var adjustMode = false
     var pickActive = false
     /// The photo is zoomed in (Fit is available).
     var zoomed = false
@@ -24,12 +25,13 @@ struct EditorKeys {
     var toggleInfo: () -> Void = {}
     var toggleLevelTool: () -> Void = {}
     var toggleCrop: () -> Void = {}
-    /// ↵: crop Done, "Level along this line", level tool Done.
+    var toggleAdjust: () -> Void = {}
+    /// ↵: crop Done, "Level along this line", level tool / Adjust Done.
     var confirm: () -> Void = {}
     /// Esc: leave crop, clear a pick, close the level tool.
     var cancel: () -> Void = {}
 
-    var canConfirm: Bool { cropMode || levelMode }
+    var canConfirm: Bool { cropMode || levelMode || adjustMode }
 }
 
 struct PadCommands: Commands {
@@ -111,6 +113,9 @@ struct PadCommands: Commands {
                 .keyboardShortcut("r", modifiers: []).disabled(p == nil || editor == nil)
             Button(crop ? "Close Crop" : "Crop") { editor?.toggleCrop() }
                 .keyboardShortcut("c", modifiers: []).disabled(p == nil || editor == nil)
+            Button(editor?.adjustMode == true ? "Close Adjust" : "Adjust") { editor?.toggleAdjust() }
+                .keyboardShortcut("e", modifiers: []).disabled(p == nil || editor == nil)
+            Button("Auto Light") { if let p { library?.autoLight([p.id]) } }.disabled(p == nil)
             Button("Done") { editor?.confirm() }
                 .keyboardShortcut(.return, modifiers: []).disabled(p == nil || !(editor?.canConfirm ?? false))
             Button("Cancel") { editor?.cancel() }

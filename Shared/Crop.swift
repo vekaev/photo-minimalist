@@ -10,11 +10,16 @@ struct EditedImage: View {
     var fix: BandFixSource?
     /// Live slider previews: fix a copy at most this big, so each change stays quick.
     var fixMaxPixel: Int?
+    /// Light adjustment (exposure, brightness…), applied after the band fix, before rotation and crop, like export.
+    var light: LightSource? = nil
 
     /// The last fixed picture and what it was made for: kept while a new one is computed (no flash of the unfixed
     /// photo while a slider moves or a sharper preview arrives), dropped when the photo changes.
     @State private var fixed: CGImage?
     @State private var fixedURL: URL?
+    /// The same for the light adjustment: the last adjusted picture of this photo, shown while the next one is made.
+    @State private var lit: CGImage?
+    @State private var litURL: URL?
 
     private var shownImage: CGImage {
         guard let fix else { return image }
@@ -32,8 +37,29 @@ struct EditedImage: View {
         fix.map { "\($0.url.path)|\(image.width)x\(image.height)|\(fixMaxPixel ?? 0)|" + BandFixStore.settingsKey($0.settings) }
     }
 
+    /// The fixed picture with the light adjustment, or the last one made for this photo while a new one renders.
+    private var finalImage: CGImage {
+        let base = shownImage
+        guard let light else { return base }
+        if let hit = LightStore.shared.cached(base, light.adjust) { return hit }
+        if let lit, litURL == light.url { return lit }
+        return base
+    }
+
+    private var lightKey: String? {
+        light.map { "\(ObjectIdentifier(shownImage).hashValue)|\($0.url.path)|\($0.adjust.key)" }
+    }
+
     var body: some View {
-        content(shownImage)
+        content(finalImage)
+            .task(id: lightKey) {
+                guard let light else { lit = nil; litURL = nil; return }
+                let base = shownImage
+                let out = await LightStore.shared.adjusted(base, light.adjust)
+                guard !Task.isCancelled else { return }
+                lit = out
+                litURL = light.url
+            }
             .task(id: fixKey) {
                 guard let fix else { fixed = nil; fixedURL = nil; return }
                 let base = source

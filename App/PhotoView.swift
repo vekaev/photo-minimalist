@@ -78,6 +78,17 @@ struct PhotoView: View {
     /// The Fixes panel is open (stays open from photo to photo until Done / Esc). Not in quick look.
     private var fixesMode: Bool { labFixes && library.fixesTool && !cropMode && !floating }
 
+    /// The Adjust tool (light sliders) is open: stays open from photo to photo until Done / Esc. Not in quick look.
+    private var adjustMode: Bool { library.adjustTool && !cropMode && !fixesMode && !floating }
+    /// The light while a slider moves (stored on release); nil = the photo's own.
+    @State private var lightDraft: LightAdjust?
+
+    /// The light adjustment on screen (none while showing the original).
+    private var shownLight: LightSource? {
+        guard !showOriginal, let a = (lightDraft ?? photo.light)?.nonIdentity else { return nil }
+        return LightSource(url: photo.url, adjust: a)
+    }
+
     /// Rotation currently on screen (counter-clockwise positive).
     private var shown: Double {
         if showOriginal { return 0 }
@@ -111,6 +122,8 @@ struct PhotoView: View {
                                  onAdd: addVersion, onLoad: loadVersion, onCompare: { showStudio = true })
                     .padding(.horizontal, 20).padding(.top, 10)
                 cropBar
+            } else if adjustMode {
+                adjustBar
             } else if levelMode { bottom }
             }
         }
@@ -147,12 +160,12 @@ struct PhotoView: View {
     /// Focus, per-photo resets and zoom requests (split out of `body` so the compiler can type-check it).
     private var lifecycle: Lifecycle {
         Lifecycle(
-            photoID: photo.id, levelTool: library.levelTool, fixesTool: library.fixesTool, cropMode: cropMode,
+            photoID: photo.id, levelTool: library.levelTool, fixesTool: library.fixesTool, adjustTool: library.adjustTool, cropMode: cropMode,
             showSettings: library.showSettings, zoomRequest: library.zoomRequest,
             focus: { focused = true },
             photoChanged: {
                 pick.clear(); preview = nil; peek = nil; chipHover = false; showOriginal = false; cropMode = false
-                lineShift = 0; showStudio = false; zoom.reset(); focused = true
+                lineShift = 0; showStudio = false; zoom.reset(); lightDraft = nil; focused = true
             },
             levelToolChanged: { on in
                 focused = true
@@ -161,6 +174,11 @@ struct PhotoView: View {
             fixesToolChanged: { on in
                 focused = true
                 if on { pick.clear(); peek = nil; chipHover = false; showOriginal = false; if cropMode { cancelCrop() } }
+            },
+            adjustToolChanged: { on in
+                focused = true
+                if !on { commitLightDraft() }
+                if on { pick.clear(); peek = nil; if cropMode { cancelCrop() } }
             },
             // View ▸ Zoom In / Zoom Out / Fit. The pane under quick look leaves them to the floating card.
             zoom: { c in
@@ -173,6 +191,7 @@ struct PhotoView: View {
         let photoID: String
         let levelTool: Bool
         let fixesTool: Bool
+        let adjustTool: Bool
         let cropMode: Bool
         let showSettings: Bool
         let zoomRequest: Library.ZoomRequest
@@ -180,6 +199,7 @@ struct PhotoView: View {
         let photoChanged: () -> Void
         let levelToolChanged: (Bool) -> Void
         let fixesToolChanged: (Bool) -> Void
+        let adjustToolChanged: (Bool) -> Void
         let zoom: (ZoomCommand) -> Void
 
         func body(content: Content) -> some View {
@@ -191,6 +211,7 @@ struct PhotoView: View {
                 .simultaneousGesture(TapGesture().onEnded { focus() })
                 .onChange(of: levelTool) { _, on in levelToolChanged(on) }
                 .onChange(of: fixesTool) { _, on in fixesToolChanged(on) }
+                .onChange(of: adjustTool) { _, on in adjustToolChanged(on) }
                 .onChange(of: cropMode) { focus() }
                 .onChange(of: showSettings) { focus() }
                 .onChange(of: photoID) { photoChanged() }
@@ -215,9 +236,9 @@ struct PhotoView: View {
                 Text(photo.name).font(.callout.weight(.medium)).lineLimit(1).truncationMode(.middle)
                 Text("\(position) / \(library.navigation.count)").font(.callout).foregroundStyle(.tertiary).monospacedDigit()
                     .lineLimit(1).fixedSize()
-                // Decided photos say so quietly: "Leveled −1.3°", "Cropped 4:5", "Kept as shot".
-                if photo.decision != .undecided {
-                    Text(library.note(for: photo)).font(.callout).foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
+                // Decided photos say so quietly: "Leveled −1.3°", "Cropped 4:5", "Kept as shot", "… · Light".
+                if let status = library.statusNote(for: photo) {
+                    Text(status).font(.callout).foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
                 }
             }
             .layoutPriority(1)
@@ -302,6 +323,7 @@ struct PhotoView: View {
         switch c {
         case .level: toggleLevelTool()
         case .crop: cropMode ? cancelCrop() : startCrop()
+        case .adjust: toggleAdjust()
         case .favorite: library.toggleFavorite(ids)
         case .original: withAnimation(.easeOut(duration: 0.12)) { showOriginal.toggle() }
         case .info: showInfo.toggle()
@@ -348,6 +370,7 @@ struct PhotoView: View {
         case .favorite: return photo.favorite ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary)
         case .level: on = levelMode
         case .crop: on = cropMode
+        case .adjust: on = adjustMode
         case .info: on = showInfo
         case .original: on = showOriginal
         case .history: on = showHistory
@@ -461,7 +484,10 @@ struct PhotoView: View {
     /// - Parameter frame: where the photo goes in the canvas (zoomed in, bigger than the canvas).
     private func photoLayer(_ frame: CGRect, rotation: Double, area: CGSize, crop: CGRect? = nil, fixed: Bool = true) -> some View {
         ZStack {
-            if let image { EditedImage(image: image, rotation: rotation, crop: crop, fix: fixed && !showOriginal ? photo.bandFixSource : nil) }
+            if let image {
+                EditedImage(image: image, rotation: rotation, crop: crop, fix: fixed && !showOriginal ? photo.bandFixSource : nil,
+                            light: fixed ? shownLight : nil)
+            }
         }
         .frame(width: frame.width, height: frame.height)
         .position(x: frame.midX, y: frame.midY)
@@ -657,6 +683,61 @@ struct PhotoView: View {
     private func closeLevelTool() {
         pick.clear()
         withAnimation(.easeOut(duration: 0.15)) { library.levelTool = false }
+    }
+
+    // MARK: Adjust (light): five sliders, Auto, Reset, Done
+
+    private func toggleAdjust() { adjustMode ? closeAdjust() : openAdjust() }
+
+    private func openAdjust() {
+        if cropMode { cancelCrop() }
+        chipHover = false; peek = nil; pick.clear()
+        withAnimation(.easeOut(duration: 0.15)) { library.adjustTool = true }
+    }
+
+    private func closeAdjust() {
+        commitLightDraft()
+        withAnimation(.easeOut(duration: 0.15)) { library.adjustTool = false }
+    }
+
+    /// A value still waiting (a slider moved but wasn't let go): store it.
+    private func commitLightDraft() {
+        guard let d = lightDraft else { return }
+        lightDraft = nil
+        library.setLight(photo.id, d)
+    }
+
+    private var adjustBar: some View {
+        let value = lightDraft ?? photo.light ?? .zero
+        return VStack(spacing: 10) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Light").font(.system(size: 20, weight: .medium))
+                    Text(value.isIdentity ? "As shot · drag a slider, or Auto" : value.summary)
+                        .font(.caption).foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
+                }
+                Spacer()
+                Button("Auto") { lightDraft = nil; library.autoLight([photo.id]); focused = true }
+                    .help("Let the app pick exposure, shadows, highlights and contrast for this photo")
+                Button("Reset") { lightDraft = nil; library.setLight(photo.id, nil, label: "Light reset"); focused = true }
+                    .disabled(value.isIdentity)
+                Button { closeAdjust() } label: {
+                    Text("Done").fontWeight(.semibold).padding(.horizontal, 16).frame(height: 30)
+                        .foregroundStyle(Theme.ground).background(Color.primary, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Close Adjust (↵ or Esc)")
+            }
+            LightSliders(value: value,
+                         onChange: { lightDraft = $0 },
+                         onCommit: { a in library.setLight(photo.id, a); lightDraft = nil; focused = true })
+            Text("Double-click a slider to reset it · Space or hold M: original · ↵ / Esc done")
+                .font(.caption2).foregroundStyle(.tertiary)
+                .lineLimit(1).minimumScaleFactor(0.8)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 12)
+        .padding(.bottom, 14)
     }
 
     // MARK: Guide line and loupes
@@ -881,6 +962,7 @@ struct PhotoView: View {
 
     private func startCrop() {
         library.fixesTool = false
+        library.adjustTool = false
         pick.clear()
         showOriginal = false
         cropDraft = photo.crop ?? CropMath.full
@@ -1008,8 +1090,11 @@ struct PhotoView: View {
             applyPick(); return .handled
         case .return where levelMode:
             closeLevelTool(); return .handled
+        case .return where adjustMode:
+            closeAdjust(); return .handled
         case .escape:
-            if !pick.isEmpty { pick.clear() } else if levelMode { closeLevelTool() } else { library.quickLook = false }
+            if !pick.isEmpty { pick.clear() } else if levelMode { closeLevelTool() } else if adjustMode { closeAdjust() }
+            else { library.quickLook = false }
             return .handled
         case .delete, .deleteForward:
             // Delete (and ⌘⌫ from the menu): the photo, or the whole selection it's part of. ⌘Z puts it back.
@@ -1028,6 +1113,7 @@ struct PhotoView: View {
         case "{": library.nudge(photo.id, by: 1)
         case "}": library.nudge(photo.id, by: -1)
         case "r", "R": toggleLevelTool()
+        case "e", "E": toggleAdjust()
         case "0": library.resetToOriginal([photo.id])
         case "g", "G": gridMode = cycle(gridMode)
         case "t", "T": if levelMode { showGuide.toggle() } else { guideInPreview.toggle() }

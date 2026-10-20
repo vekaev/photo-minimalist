@@ -11,7 +11,10 @@ struct HorizonLevelerApp: App {
     @State private var idle = Library()
     private var library: Library { focusedLibrary ?? idle }
 
-    init() { DispatchQueue.main.async { AppAppearance.current.apply() } }
+    init() {
+        PhotoControl.migrateStoredLists()
+        DispatchQueue.main.async { AppAppearance.current.apply() }
+    }
 
     /// A text field is being edited: let ⌘C / ⌘V / ⌘A do their usual thing.
     private var editingText: Bool { NSApp.keyWindow?.firstResponder is NSTextView }
@@ -133,6 +136,12 @@ struct HorizonLevelerApp: App {
                 photoKey("Undecided", "u") { library.decideAndMove(targets.map(\.id), .undecided) }
                 Divider()
                 photoKey("Level Tool", "r") { library.levelTool.toggle() }
+                photoKey("Adjust", "e") { library.adjustTool.toggle() }
+                Divider()
+                Button("Auto Light") { library.autoLight(targets.map(\.id)) }
+                    .disabled(library.folder == nil || targets.isEmpty)
+                Button("Reset Light") { library.resetLight(targets.map(\.id)) }
+                    .disabled(library.folder == nil || !targets.contains { $0.light != nil })
             }
         }
 

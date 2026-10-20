@@ -60,10 +60,15 @@ public enum Renderer {
     }
 
     /// - Parameter bandFix: optional Band Fixer settings, applied to the upright full image before leveling / crop.
+    /// - Parameter light: optional light adjustment (`LightAdjust`), applied after the band fix, before leveling / crop.
+    /// - Parameter priorLights: adjustments written into the file by earlier saves to the original, applied before
+    ///   `light` (rendering again from the untouched backup has to repeat them).
     public static func export(source: URL, degrees: Double, crop: CGRect? = nil, bandFix: BandFixSettings? = nil,
+                              light: LightAdjust? = nil, priorLights: [LightAdjust] = [],
                               to destination: URL, format: ExportFormat, quality: Double) throws {
         guard var image = loadFullImage(source) else { throw RenderError.unreadable(source) }
         if let bandFix { image = bandFixed(image, source: source, settings: bandFix) }
+        for l in priorLights + (light.map { [$0] } ?? []) { image = l.apply(to: image) }
         let output = cropped(leveled(image, degrees: degrees), to: crop)
         let space = CGColorSpace(name: format == .jpeg ? CGColorSpace.sRGB : CGColorSpace.displayP3)!
         guard let cg = context.createCGImage(output, from: output.extent, format: format == .tiff ? .RGBA16 : .RGBA8, colorSpace: space) else {

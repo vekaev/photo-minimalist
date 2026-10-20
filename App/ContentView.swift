@@ -489,7 +489,7 @@ private struct Row: View {
                     if let tag = photo.companionTag { RawTag(text: tag) }
                     if photo.favorite { FavoriteMark() }
                 }
-                Text(library.note(for: photo)).font(.caption)
+                Text(library.listNote(for: photo)).font(.caption)
                     .foregroundStyle(photo.decision == .undecided ? .secondary : .primary)
                     .lineLimit(1)
                 if columns.isEmpty {
@@ -559,6 +559,11 @@ struct StatusMenu: View {
         Divider()
         let photos = ids.compactMap(library.photo)
         Button((photos.contains { !$0.favorite } ? "Favorite" : "Unfavorite") + suffix) { library.toggleFavorite(ids) }
+        Divider()
+        Button("Auto Light" + suffix) { library.autoLight(ids) }
+        if photos.contains(where: { $0.light != nil }) {
+            Button("Reset Light" + suffix) { library.resetLight(ids) }
+        }
         Divider()
         Button("Copy" + suffix) { library.copyPhotos(photos, kind: .asShown) }
         Button("Copy Original" + suffix) { library.copyPhotos(photos, kind: .original) }
@@ -636,7 +641,7 @@ struct PhotoThumb: View {
                 let aspect = Geometry.finalAspect(CGFloat(image.width) / CGFloat(image.height), crop: photo.appliedCrop)
                 Color.clear
                     .aspectRatio(aspect, contentMode: fit ? .fit : .fill)
-                    .overlay { EditedImage(image: image, rotation: photo.appliedCorrection, crop: photo.appliedCrop, fix: photo.bandFixSource) }
+                    .overlay { EditedImage(image: image, rotation: photo.appliedCorrection, crop: photo.appliedCrop, fix: photo.bandFixSource, light: photo.lightSource) }
                     .clipped()
                     .overlay {
                         if showSuggestion, library.hasSuggestion(photo), let d = photo.detection { HorizonLine(degrees: d.angle) }

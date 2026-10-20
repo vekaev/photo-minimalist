@@ -55,6 +55,14 @@ struct EditorView: View {
 
     /// The level tool is open (shared with the Mac's R; stays open from photo to photo until Done).
     private var levelMode: Bool { library.levelTool && !cropMode }
+    /// The light panel (Adjust) is open; like the level tool it stays open from photo to photo until Done.
+    private var adjustMode: Bool { library.adjustTool && !cropMode }
+    /// The light while a slider moves (stored on release); nil = the photo's own.
+    @State private var lightDraft: LightAdjust?
+    /// Holding a finger on the photo in the light panel shows the original until it lifts.
+    @State private var holdToken = 0
+    @State private var holdStart: CGPoint?
+    @State private var holdShowsOriginal = false
 
     private var photo: Photo? { library.photo(library.openedID) }
 
@@ -74,6 +82,9 @@ struct EditorView: View {
                 } else if levelMode {
                     controls(photo)
                         .frame(maxWidth: pad == nil ? .infinity : 640)
+                } else if adjustMode {
+                    lightPanel(photo)
+                        .frame(maxWidth: pad == nil ? .infinity : 720)
                 }
             }
             .background(Color(.systemBackground))
@@ -106,6 +117,7 @@ struct EditorView: View {
             .onAppear { if image == nil { image = ImageCache.shared.cached(for: photo.url) } }
             .onChange(of: photo.id) { image = ImageCache.shared.cached(for: photo.url) }
             .onChange(of: library.levelTool) { if !library.levelTool { pick.clear(); preview = nil; peek = nil } }
+            .onChange(of: library.adjustTool) { if !library.adjustTool { commitLightDraft(photo) } else if cropMode { cropMode = false } }
             .task(id: photo.url) {
                 pick.clear()
                 peek = nil
@@ -114,6 +126,7 @@ struct EditorView: View {
                 cropMode = false
                 lineShift = 0
                 showStudio = false
+                lightDraft = nil
                 zoom.reset()
                 // Reused from photo to photo (iPad sidebar, swipes): never keep the previous photo's image, and
                 // ignore loads that finish after moving on.
@@ -173,7 +186,7 @@ struct EditorView: View {
             ForEach(all.prefix(shown)) { c in
                 Button { perform(c, p) } label: {
                     Image(systemName: symbol(c, p))
-                        .font(.system(size: 17, weight: c == .level && levelMode ? .bold : .medium))
+                        .font(.system(size: 17, weight: (c == .level && levelMode) || (c == .adjust && adjustMode) ? .bold : .medium))
                         .foregroundStyle(c == .favorite && p.favorite ? AnyShapeStyle(.red) : AnyShapeStyle(.tint))
                         .frame(width: 44, height: 44).contentShape(Rectangle())
                 }
@@ -214,6 +227,7 @@ struct EditorView: View {
         switch c {
         case .level: toggleLevelTool()
         case .crop: cropMode ? (cropMode = false) : startCrop(p)
+        case .adjust: toggleAdjust()
         case .favorite: library.toggleFavorite([p.id])
         case .original: withAnimation(.easeOut(duration: 0.12)) { showOriginal.toggle() }
         case .history: library.showActivity = true
@@ -249,6 +263,7 @@ struct EditorView: View {
         case .favorite: return p.favorite ? "Unfavorite" : "Favorite"
         case .original: return showOriginal ? "Show the result" : "Show the original"
         case .level: return levelMode ? "Close the level tool" : "Level tool"
+        case .adjust: return adjustMode ? "Close Adjust" : "Adjust light"
         default: return c.title
         }
     }
@@ -281,22 +296,25 @@ struct EditorView: View {
     /// The keyboard's view of this editor (Photo menu: Space, R, C, ↵, Esc, I).
     private func keys(_ p: Photo) -> EditorKeys {
         EditorKeys(
-            showOriginal: showOriginal, cropMode: cropMode, levelMode: levelMode, pickActive: !pick.isEmpty,
+            showOriginal: showOriginal, cropMode: cropMode, levelMode: levelMode, adjustMode: adjustMode, pickActive: !pick.isEmpty,
             zoomed: zoom.isZoomed,
             zoom: { c in withAnimation(.easeOut(duration: 0.15)) { zoom.apply(c) } },
             toggleOriginal: { withAnimation(.easeOut(duration: 0.12)) { showOriginal.toggle() } },
             toggleInfo: { toggleInfo() },
             toggleLevelTool: { toggleLevelTool() },
             toggleCrop: { toggleCrop(p) },
+            toggleAdjust: { toggleAdjust() },
             confirm: {
                 if cropMode { applyCrop(p) }
                 else if pick.isComplete { applyPick(p) }
                 else if levelMode { toggleLevelTool() }
+                else if adjustMode { toggleAdjust() }
             },
             cancel: {
                 if cropMode { withAnimation(.easeOut(duration: 0.15)) { cropMode = false } }
                 else if !pick.isEmpty { pick.clear() }
                 else if levelMode { toggleLevelTool() }
+                else if adjustMode { toggleAdjust() }
             })
     }
 
@@ -363,6 +381,7 @@ struct EditorView: View {
             .contentShape(Rectangle())
             .coordinateSpace(name: "photo")
             .modifier(zoomInput(fit: fit, area: area, frame: frame))
+            .simultaneousGesture(adjustMode ? holdForOriginal : nil)
             // Default view at fit: swipes always change photos.
             .gesture(cropMode || levelMode || zoom.isZoomed ? nil :
                 DragGesture(minimumDistance: 20, coordinateSpace: .named("photo"))
@@ -490,6 +509,7 @@ struct EditorView: View {
     }
 
     private func hint(_ p: Photo) -> String? {
+        if holdShowsOriginal { return "Original" }
         if showOriginal { return "Original · tap the eye for the result" }
         if p.decision == .keep { return "Kept as shot" }
         return nil
@@ -498,7 +518,7 @@ struct EditorView: View {
     /// - Parameter frame: where the photo goes in the canvas (zoomed in, bigger than the canvas).
     private func photoLayer(frame: CGRect, rotation: Double, area: CGSize, crop: CGRect?) -> some View {
         ZStack {
-            if let image { EditedImage(image: image, rotation: rotation, crop: crop, fix: shownFix) }
+            if let image { EditedImage(image: image, rotation: rotation, crop: crop, fix: shownFix, light: shownLight) }
         }
         .frame(width: frame.width, height: frame.height)
         .position(x: frame.midX, y: frame.midY)
@@ -568,6 +588,81 @@ struct EditorView: View {
         return p.bandFixSource
     }
 
+    /// The light adjustment on screen: the slider being moved, else the photo's; none while showing the original.
+    private var shownLight: LightSource? {
+        guard let p = photo, !showOriginal, let a = (lightDraft ?? p.light)?.nonIdentity else { return nil }
+        return LightSource(url: p.url, adjust: a)
+    }
+
+    // MARK: Light (Adjust): five sliders, Auto, Reset, Done
+
+    private func toggleAdjust() {
+        if cropMode { cropMode = false }
+        peek = nil; chipHold = false; pick.clear()
+        withAnimation(.easeOut(duration: 0.15)) { library.adjustTool.toggle() }
+    }
+
+    private func commitLightDraft(_ p: Photo) {
+        guard let d = lightDraft else { return }
+        lightDraft = nil
+        library.setLight(p.id, d)
+    }
+
+    private func lightPanel(_ p: Photo) -> some View {
+        let value = lightDraft ?? p.light ?? .zero
+        return VStack(spacing: 14) {
+            LightSliders(value: value,
+                         onChange: { lightDraft = $0 },
+                         onCommit: { a in library.setLight(p.id, a); lightDraft = nil },
+                         minColumn: 150)
+            HStack(spacing: 10) {
+                Button { lightDraft = nil; library.autoLight([p.id]) } label: {
+                    Label("Auto", systemImage: "wand.and.stars").frame(maxWidth: .infinity, minHeight: 50)
+                        .overlay(Capsule().strokeBorder(Ink.rule, lineWidth: 1))
+                }
+                Button { lightDraft = nil; library.setLight(p.id, nil, label: "Light reset") } label: {
+                    Text("Reset").frame(maxWidth: .infinity, minHeight: 50)
+                        .overlay(Capsule().strokeBorder(Ink.rule, lineWidth: 1))
+                }
+                .disabled(value.isIdentity)
+                Button { toggleAdjust() } label: {
+                    Text("Done").font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 50)
+                        .foregroundStyle(Color(.systemBackground)).background(Color.primary, in: Capsule())
+                }
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 14)
+        .padding(.bottom, 8)
+    }
+
+    /// In the light panel: a finger held still on the photo (~0.25 s) shows the original until it lifts. Swipes and
+    /// pinches still work (moving more than a few points cancels the hold).
+    private var holdForOriginal: some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .named("photo"))
+            .onChanged { v in
+                if holdStart == nil {
+                    holdStart = v.startLocation
+                    holdToken += 1
+                    let token = holdToken
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                        guard holdToken == token, holdStart != nil, !pinching, !showOriginal else { return }
+                        holdShowsOriginal = true
+                        showOriginal = true
+                    }
+                }
+                if hypot(v.translation.width, v.translation.height) > 10 || pinching { endHold() ; holdStart = v.startLocation }
+            }
+            .onEnded { _ in endHold() }
+    }
+
+    private func endHold() {
+        holdToken += 1
+        holdStart = nil
+        if holdShowsOriginal { holdShowsOriginal = false; showOriginal = false }
+    }
+
     // MARK: Crop
 
     private var normalizedCropRatio: CGFloat? {
@@ -575,6 +670,7 @@ struct EditorView: View {
     }
 
     private func startCrop(_ p: Photo) {
+        library.adjustTool = false
         pick.clear()
         showOriginal = false
         cropDraft = p.crop ?? CropMath.full

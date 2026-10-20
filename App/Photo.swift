@@ -24,6 +24,9 @@ struct Snapshot: Codable, Equatable {
     var crop: CGRect?
     /// Film scan fix (Leica M6 shutter bands), applied to the upright photo before leveling / crop; nil = none.
     var bandFix: BandFixSettings?
+    /// Light adjustment (exposure, brightness, contrast, highlights, shadows), applied after the band fix and before
+    /// leveling / crop; nil = none (never an all-zero value).
+    var light: LightAdjust?
 }
 
 /// What the photo list shows. Everything starts in "To review": nothing is decided for you.
@@ -123,8 +126,12 @@ final class Photo: Identifiable {
     var appliedCrop: CGRect? { decision == .level ? current.crop : nil }
     /// Film scan fix (shutter bands). Independent of the level decision: it applies whatever the decision is.
     var bandFix: BandFixSettings? { current.bandFix }
-    /// Anything to write: a rotation, a crop or a band fix.
-    var hasEdits: Bool { (decision == .level && (abs(correction) >= 0.01 || current.crop != nil)) || bandFix != nil }
+    /// Light adjustment. Like the band fix it applies whatever the level decision is.
+    var light: LightAdjust? { current.light }
+    /// Edits that apply whatever the decision is (they put the photo in the Edited tab on their own).
+    var hasAdjustments: Bool { bandFix != nil || light != nil }
+    /// Anything to write: a rotation, a crop, a band fix or a light adjustment.
+    var hasEdits: Bool { (decision == .level && (abs(correction) >= 0.01 || current.crop != nil)) || hasAdjustments }
     /// Width / height of the photo as last loaded (for naming crop ratios); 3:2 until known.
     var analysisAspect: CGFloat = 1.5
     /// The last "Save to original" included a crop, so the file is no longer the full frame.
@@ -132,6 +139,9 @@ final class Photo: Identifiable {
     /// The band fix written into the file by the last "Save to original" (re-applied when saving again from the
     /// untouched backup, unless a new fix replaces it).
     var savedBandFix: BandFixSettings?
+    /// Light adjustments written into the file by earlier saves to the original, oldest first (re-applied, before the
+    /// current one, when saving again from the untouched backup).
+    var savedLights: [LightAdjust] = []
     /// Marked with ♥ (F). On the Mac the file also gets Finder's Red tag.
     var favorite = false
     /// Crops tried for this photo, oldest first.
@@ -161,12 +171,13 @@ final class Photo: Identifiable {
     var canUndo: Bool { index > 0 }
     var canRedo: Bool { index < history.count - 1 }
 
-    /// `crop` / `bandFix`: nil keeps the current value, `.some(nil)` clears it.
-    func record(_ decision: Decision, correction: Double, label: String, crop: CGRect?? = nil, bandFix: BandFixSettings?? = nil) {
+    /// `crop` / `bandFix` / `light`: nil keeps the current value, `.some(nil)` clears it.
+    func record(_ decision: Decision, correction: Double, label: String, crop: CGRect?? = nil, bandFix: BandFixSettings?? = nil,
+                light: LightAdjust?? = nil) {
         let next = Snapshot(decision: decision, correction: correction, label: label, crop: crop ?? current.crop,
-                            bandFix: bandFix ?? current.bandFix)
+                            bandFix: bandFix ?? current.bandFix, light: light ?? current.light)
         if next.decision == current.decision, next.correction == current.correction, next.crop == current.crop,
-           next.bandFix == current.bandFix { return }
+           next.bandFix == current.bandFix, next.light == current.light { return }
         history.removeSubrange((index + 1)...)
         history.append(next)
         index = history.count - 1
@@ -200,13 +211,14 @@ final class Photo: Identifiable {
         var chosenVersionID: UUID?
         var info: PhotoInfo?
         var savedBandFix: BandFixSettings?
+        var savedLights: [LightAdjust]?
     }
 
     var saved: Saved { Saved(analyzed: analyzed, detection: detection, history: history, index: index,
                              analysisVersion: analysisVersion, savedCorrection: savedCorrection == 0 ? nil : savedCorrection,
                              savedHadCrop: savedHadCrop ? true : nil, favorite: favorite ? true : nil,
                              cropVersions: cropVersions.isEmpty ? nil : cropVersions, chosenVersionID: chosenVersionID,
-                             info: info, savedBandFix: savedBandFix) }
+                             info: info, savedBandFix: savedBandFix, savedLights: savedLights.isEmpty ? nil : savedLights) }
 
     func restore(_ s: Saved) {
         analyzed = s.analyzed
@@ -219,6 +231,7 @@ final class Photo: Identifiable {
         chosenVersionID = s.chosenVersionID
         info = s.info ?? info
         savedBandFix = s.savedBandFix
+        savedLights = s.savedLights ?? []
         if !s.history.isEmpty {
             history = s.history
             index = min(max(s.index, 0), s.history.count - 1)

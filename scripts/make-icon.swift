@@ -1,118 +1,110 @@
-// Draws the Photo Minimalist app icon (1024×1024 PNG) on a warm paper tile:
-//   lens:   a lens holding a sunset (warm sky over a blue sea), split by a dead-level horizon, with the
-//           app's dashed guide line running through it.
-//   camera: the same sunset lens set in a soft, rounded camera body.
-// Run: swift scripts/make-icon.swift AppIcon-1024.png [ios] [lens|camera] [light]
+// Draws the Photo Minimalist app icon (1024×1024 PNG) in a soft-UI style shared with DayGate and Meeting Memo:
+// a warm light tile, a raised camera body, and in its lens a crooked horizon (orange sky, blue sea) with the
+// app's dashed level guide running dead straight through it — the one thing the app fixes.
+// Run: swift scripts/make-icon.swift AppIcon-1024.png [ios]
 //      ios: full-bleed square (the system rounds it); default is the macOS rounded tile with shadow.
 import AppKit
 
-let size: CGFloat = 1024
+let canvas: CGFloat = 1024
 let args = CommandLine.arguments.dropFirst()
 let out = args.first ?? "AppIcon-1024.png"
 let iOS = args.contains("ios")
-let style = args.first { ["lens", "camera"].contains($0) } ?? "camera"
-let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size), pixelsHigh: Int(size), bitsPerSample: 8,
+let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(canvas), pixelsHigh: Int(canvas), bitsPerSample: 8,
                            samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
 NSGraphicsContext.saveGraphicsState()
 NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
 let ctx = NSGraphicsContext.current!.cgContext
-let space = CGColorSpace(name: CGColorSpace.sRGB)!
 
 func rgb(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat, _ a: CGFloat = 1) -> CGColor { CGColor(srgbRed: r / 255, green: g / 255, blue: b / 255, alpha: a) }
-func gradient(_ colors: [CGColor]) -> CGGradient {
-    CGGradient(colorsSpace: space, colors: colors as CFArray, locations: (0..<colors.count).map { CGFloat($0) / CGFloat(colors.count - 1) })!
-}
-// Dark by default (graphite tile, dark body); pass "light" for the earlier cream version.
-let dark = !args.contains("light")
-let paper = dark ? rgb(26, 26, 28) : rgb(247, 243, 232)
-let paperEdge = dark ? rgb(58, 58, 62) : rgb(230, 224, 208)
-let white = dark ? rgb(52, 52, 56) : rgb(255, 255, 255)   // camera body and the rim around the lens
-let sky = gradient([rgb(255, 196, 64), rgb(255, 106, 82), rgb(236, 54, 120)])   // amber → coral → magenta, top to horizon
-let sea = gradient([rgb(64, 120, 255), rgb(46, 52, 196)])                         // bright blue → indigo, horizon down
-let ring = dark ? rgb(96, 128, 255) : rgb(39, 72, 230)
+let paperTop = rgb(242, 241, 237), paperBottom = rgb(232, 230, 225), well = rgb(226, 224, 219), body = rgb(240, 238, 234)
+let orange = rgb(243, 108, 36), blue = rgb(43, 102, 224)
 
-// macOS icon grid: ~824pt rounded square centered on a 1024 canvas.
-let inset: CGFloat = iOS ? 0 : 100
-let tile = CGRect(x: inset, y: inset, width: size - 2 * inset, height: size - 2 * inset)
-let radius: CGFloat = iOS ? 0 : 185
-let tilePath = CGPath(roundedRect: tile, cornerWidth: radius, cornerHeight: radius, transform: nil)
-
-ctx.saveGState()
-if !iOS { ctx.setShadow(offset: CGSize(width: 0, height: -12), blur: 30, color: rgb(0, 0, 0, 0.28)) }
-ctx.addPath(tilePath); ctx.setFillColor(paper); ctx.fillPath()
-ctx.restoreGState()
-
-let k = tile.width / 824
-let c = CGPoint(x: size / 2, y: size / 2 - (style == "camera" ? 30 * k : 0))
-let r: CGFloat = (style == "camera" ? 190 : 235) * k
-let horizon = c.y - r * 0.12
-let gap = 16 * k
-let lens = CGPath(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r), transform: nil)
-
-// Camera body (camera style): a soft rounded block with a viewfinder hump and a shutter button.
-if style == "camera" {
-    let body = CGRect(x: c.x - 330 * k, y: c.y - 245 * k, width: 660 * k, height: 470 * k)
-    let shape = CGMutablePath()
-    shape.addRoundedRect(in: body, cornerWidth: 110 * k, cornerHeight: 110 * k)
-    shape.addRoundedRect(in: CGRect(x: c.x - 120 * k, y: body.maxY - 60 * k, width: 240 * k, height: 130 * k), cornerWidth: 50 * k, cornerHeight: 50 * k)
+// The tile: inset rounded square with a soft shadow on macOS, the whole canvas on iOS.
+let tile = iOS ? CGRect(x: 0, y: 0, width: canvas, height: canvas) : CGRect(x: 100, y: 100, width: 824, height: 824)
+let tilePath = iOS ? CGPath(rect: tile, transform: nil) : CGPath(roundedRect: tile, cornerWidth: 185, cornerHeight: 185, transform: nil)
+if !iOS {
     ctx.saveGState()
-    ctx.setShadow(offset: CGSize(width: 0, height: -10 * k), blur: 30 * k, color: rgb(40, 30, 10, 0.18))
-    ctx.addPath(shape); ctx.setFillColor(white); ctx.fillPath()
+    ctx.setShadow(offset: CGSize(width: 0, height: -10), blur: 28, color: rgb(0, 0, 0, 0.22))
+    ctx.addPath(tilePath); ctx.setFillColor(paperBottom); ctx.fillPath()
     ctx.restoreGState()
-    ctx.setFillColor(rgb(255, 80, 70))
-    ctx.addPath(CGPath(roundedRect: CGRect(x: body.maxX - 150 * k, y: body.maxY + 4 * k, width: 80 * k, height: 34 * k), cornerWidth: 17 * k, cornerHeight: 17 * k, transform: nil)); ctx.fillPath()
 }
-
-// Arc-style outlines: a thin colored ring, then a thick white rim hugging the lens.
-ctx.setStrokeColor(ring); ctx.setLineWidth(10 * k)
-ctx.strokeEllipse(in: CGRect(x: c.x - r - 46 * k, y: c.y - r - 46 * k, width: 2 * (r + 46 * k), height: 2 * (r + 46 * k)))
-ctx.setFillColor(white)
-ctx.fillEllipse(in: CGRect(x: c.x - r - 26 * k, y: c.y - r - 26 * k, width: 2 * (r + 26 * k), height: 2 * (r + 26 * k)))
-
-// The sunset inside the lens: sky above the horizon, sea below, a white level gap between them.
-ctx.saveGState()
-ctx.addPath(lens); ctx.clip()
-ctx.saveGState()
-ctx.clip(to: CGRect(x: c.x - r, y: horizon + gap / 2, width: 2 * r, height: 2 * r))
-ctx.drawLinearGradient(sky, start: CGPoint(x: c.x, y: c.y + r), end: CGPoint(x: c.x, y: horizon), options: [])
-// The sun, half set.
-ctx.setFillColor(rgb(255, 238, 200, 0.95))
-let sun = r * 0.34
-ctx.fillEllipse(in: CGRect(x: c.x - sun, y: horizon - sun + gap / 2, width: 2 * sun, height: 2 * sun))
-ctx.restoreGState()
-ctx.saveGState()
-ctx.clip(to: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: horizon - gap / 2 - (c.y - r)))
-ctx.drawLinearGradient(sea, start: CGPoint(x: c.x, y: horizon), end: CGPoint(x: c.x, y: c.y - r), options: [])
-ctx.restoreGState()
-// Soft glass highlight, top left.
-let glass = gradient([rgb(255, 255, 255, 0.35), rgb(255, 255, 255, 0)])
-ctx.drawRadialGradient(glass, startCenter: CGPoint(x: c.x - r * 0.45, y: c.y + r * 0.55), startRadius: 0,
-                       endCenter: CGPoint(x: c.x - r * 0.45, y: c.y + r * 0.55), endRadius: r * 0.7, options: [])
-ctx.restoreGState()
-
-// The app's dashed guide line, dead level, running through the horizon past the lens.
-ctx.setStrokeColor(style == "camera" ? rgb(39, 72, 230, 0.55) : ring)
-ctx.setLineWidth(12 * k); ctx.setLineCap(.round)
-ctx.setLineDash(phase: 0, lengths: [26 * k, 26 * k])
-let reach = style == "camera" ? 0 : 395 * k
-for (a, b) in [(c.x - reach, c.x - r - 70 * k), (c.x + r + 70 * k, c.x + reach)] where b > a {
-    ctx.move(to: CGPoint(x: a, y: horizon)); ctx.addLine(to: CGPoint(x: b, y: horizon))
-}
-ctx.strokePath()
-ctx.setLineDash(phase: 0, lengths: [])
-
-// Fine paper grain.
 ctx.saveGState()
 ctx.addPath(tilePath); ctx.clip()
-var seed: UInt64 = 42
-func rnd() -> CGFloat { seed = seed &* 6364136223846793005 &+ 1442695040888963407; return CGFloat(seed >> 33) / CGFloat(1 << 31) }
-for _ in 0..<22000 {
-    ctx.setFillColor(rnd() > 0.5 ? rgb(255, 255, 255, 0.05) : rgb(0, 0, 0, 0.03))
-    ctx.fill(CGRect(x: tile.minX + rnd() * tile.width, y: tile.minY + rnd() * tile.height, width: 2, height: 2))
+let paper = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: [paperTop, paperBottom] as CFArray, locations: [0, 1])!
+ctx.drawLinearGradient(paper, start: CGPoint(x: 0, y: tile.maxY), end: CGPoint(x: 0, y: tile.minY), options: [])
+
+// Soft-UI shadows, scaled to the tile. Light comes from the top left (y grows upward here).
+let S = tile.width, c = CGPoint(x: tile.midX, y: tile.midY)
+let d = 0.014 * S, blur = 0.03 * S
+
+func rrect(_ r: CGRect, _ radius: CGFloat) -> CGPath { CGPath(roundedRect: r, cornerWidth: radius, cornerHeight: radius, transform: nil) }
+func circle(_ r: CGFloat, _ p: CGPoint) -> CGPath { CGPath(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r), transform: nil) }
+
+/// A shadow cast inside `shape`, as if it were pressed into the surface.
+func innerShadow(_ shape: CGPath, _ offset: CGSize, _ b: CGFloat, _ color: CGColor) {
+    ctx.saveGState()
+    ctx.addPath(shape); ctx.clip()
+    let ring = CGMutablePath()
+    ring.addRect(tile.insetBy(dx: -S, dy: -S))
+    ring.addPath(shape)
+    ctx.setShadow(offset: offset, blur: b, color: color)
+    ctx.addPath(ring); ctx.setFillColor(rgb(0, 0, 0)); ctx.fillPath(using: .evenOdd)
+    ctx.restoreGState()
 }
+
+/// Raised off the surface (light top left, dark bottom right), with a soft hollow on top.
+func raised(_ shape: CGPath, _ color: CGColor) {
+    for (offset, shade) in [(CGSize(width: -d, height: d), rgb(255, 255, 255, 0.95)), (CGSize(width: d, height: -d), rgb(0, 0, 0, 0.28))] {
+        ctx.saveGState()
+        ctx.setShadow(offset: offset, blur: blur, color: shade)
+        ctx.addPath(shape); ctx.setFillColor(color); ctx.fillPath()
+        ctx.restoreGState()
+    }
+    innerShadow(shape, CGSize(width: d * 0.6, height: -d * 0.6), blur * 0.8, rgb(0, 0, 0, 0.25))
+    innerShadow(shape, CGSize(width: -d * 0.6, height: d * 0.6), blur * 0.8, rgb(255, 255, 255, 0.5))
+}
+
+/// Pressed into the surface.
+func pressed(_ shape: CGPath, _ color: CGColor) {
+    ctx.addPath(shape); ctx.setFillColor(color); ctx.fillPath()
+    innerShadow(shape, CGSize(width: d, height: -d), blur, rgb(0, 0, 0, 0.35))
+    innerShadow(shape, CGSize(width: -d * 0.7, height: d * 0.7), blur, rgb(255, 255, 255, 0.8))
+}
+
+// Camera: viewfinder bump, body, shutter button.
+raised(rrect(CGRect(x: c.x - 0.16 * S, y: c.y + 0.21 * S, width: 0.18 * S, height: 0.08 * S), 0.03 * S), body)
+raised(rrect(CGRect(x: c.x - 0.36 * S, y: c.y - 0.25 * S, width: 0.72 * S, height: 0.50 * S), 0.11 * S), body)
+raised(rrect(CGRect(x: c.x + 0.20 * S, y: c.y + 0.15 * S, width: 0.09 * S, height: 0.045 * S), 0.022 * S), orange)
+
+// Lens: a well pressed into the body, the glass raised inside it.
+let lc = CGPoint(x: c.x, y: c.y - 0.01 * S), r = 0.15 * S
+pressed(circle(0.20 * S, lc), well)
+let glass = circle(r, lc)
+raised(glass, blue)
+
+// Inside the glass: a crooked horizon, and the dashed guide that is level.
+ctx.saveGState()
+ctx.addPath(glass); ctx.clip()
+ctx.saveGState()
+ctx.translateBy(x: lc.x, y: lc.y); ctx.rotate(by: 0.16)
+ctx.setFillColor(orange); ctx.fill(CGRect(x: -2 * r, y: 0, width: 4 * r, height: 2 * r))
+ctx.setFillColor(blue); ctx.fill(CGRect(x: -2 * r, y: -2 * r, width: 4 * r, height: 2 * r))
+ctx.restoreGState()
+ctx.setStrokeColor(rgb(255, 255, 255, 0.95)); ctx.setLineWidth(0.06 * r)
+ctx.setLineDash(phase: 0, lengths: [0.16 * r, 0.11 * r])
+ctx.move(to: CGPoint(x: lc.x - r, y: lc.y)); ctx.addLine(to: CGPoint(x: lc.x + r, y: lc.y)); ctx.strokePath()
+ctx.restoreGState()
+innerShadow(glass, CGSize(width: d * 0.6, height: -d * 0.6), blur * 0.8, rgb(0, 0, 0, 0.25))
+innerShadow(glass, CGSize(width: -d * 0.6, height: d * 0.6), blur * 0.8, rgb(255, 255, 255, 0.45))
 ctx.restoreGState()
 
-if !iOS { ctx.addPath(tilePath); ctx.setStrokeColor(paperEdge); ctx.setLineWidth(3); ctx.strokePath() }
+if !iOS {
+    // A hairline edge so the light tile reads on a light Dock.
+    ctx.addPath(tilePath)
+    ctx.setStrokeColor(rgb(0, 0, 0, 0.06))
+    ctx.setLineWidth(2)
+    ctx.strokePath()
+}
 
 NSGraphicsContext.restoreGraphicsState()
 try! rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: out))

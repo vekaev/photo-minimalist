@@ -61,32 +61,24 @@ private struct LightSliderRow: View {
     }
 
     private var slider: some View {
-        Slider(value: Binding(get: { v }, set: { new in
-            var a = held ?? value
-            a[control] = snapped(new)
-            held = a
-            onChange(a)
-        }), in: control.range) { editing in
-            if !editing {
-                let a = held ?? value
-                held = nil
-                onCommit(a)
-            }
-        }
-        .controlSize(.small)
-        #if os(macOS)
-        .simultaneousGesture(TapGesture(count: 2).onEnded { reset() })
-        #else
-        // A tick when the slider reaches (or leaves) 0.
-        .sensoryFeedback(.selection, trigger: v == 0)
-        #endif
+        FineDial(value: v, control: control,
+                 onChange: { new in
+                     var a = held ?? value
+                     a[control] = new
+                     held = a
+                     onChange(a)
+                 },
+                 onCommit: { new in
+                     var a = held ?? value
+                     a[control] = snapped(new)
+                     held = nil
+                     onCommit(a)
+                 },
+                 onReset: reset)
     }
 
-    /// Within 2 % of the range from 0 counts as 0, so the middle is easy to hit.
-    private func snapped(_ x: Double) -> Double {
-        let span = control.range.upperBound - control.range.lowerBound
-        return abs(x) < span * 0.02 ? 0 : x
-    }
+    /// Within half a fine tick of 0 counts as 0 when let go, so the middle is easy to hit.
+    private func snapped(_ x: Double) -> Double { abs(x) < FineDial.minor(control) / 2 ? 0 : x }
 
     private func reset() {
         guard abs(v) >= 0.005 else { return }
@@ -105,6 +97,82 @@ private struct ResetOnDoubleClick: ViewModifier {
         content.onTapGesture { if (NSApp.currentEvent?.clickCount ?? 1) >= 2 { reset() } }
         #else
         content.onTapGesture(count: 2) { reset() }
+        #endif
+    }
+}
+
+/// A tick ruler like the level ruler, for one light control: the value sits under the centre marker; drag left or
+/// right to scrub it (Mac: ⌥ for 10× finer), double-click (double-tap) to reset. Fine ticks every 0.05 EV
+/// (Exposure) or 2 (the others), labelled every 0.5 EV / 10. Values are kept to 0.01 EV / 0.5.
+struct FineDial: View {
+    let value: Double
+    let control: LightAdjust.Control
+    let onChange: (Double) -> Void
+    let onCommit: (Double) -> Void
+    let onReset: () -> Void
+    @State private var start: Double?
+
+    static func minor(_ c: LightAdjust.Control) -> Double { c == .exposure ? 0.05 : 0.02 }
+    private var minor: Double { Self.minor(control) }
+    /// Every n-th fine tick is long and labelled.
+    private let major = 10
+    private let pointsPerMinor: CGFloat = 9
+
+    var body: some View {
+        Canvas { ctx, size in
+            let mid = size.width / 2
+            let range = control.range
+            let reach = Int((mid / pointsPerMinor).rounded(.up)) + 1
+            let centre = Int((value / minor).rounded())
+            for i in (centre - reach)...(centre + reach) {
+                let v = Double(i) * minor
+                guard v >= range.lowerBound - 1e-9, v <= range.upperBound + 1e-9 else { continue }
+                let x = mid + CGFloat((v - value) / minor) * pointsPerMinor
+                let isMajor = i % major == 0, isHalf = i % (major / 2) == 0
+                let h: CGFloat = isMajor ? 13 : isHalf ? 8 : 4
+                var p = Path()
+                p.move(to: CGPoint(x: x, y: size.height - h)); p.addLine(to: CGPoint(x: x, y: size.height))
+                ctx.stroke(p, with: .color(.primary.opacity(isMajor ? 0.55 : 0.22)), lineWidth: isMajor ? 1 : 0.5)
+                if isMajor {
+                    let label = Text(i == 0 ? "0" : control.format(v))
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(.primary.opacity(i == 0 ? 0.7 : 0.4))
+                    ctx.draw(label, at: CGPoint(x: x, y: size.height - h - 7))
+                }
+            }
+            var marker = Path()
+            marker.move(to: CGPoint(x: mid, y: 2)); marker.addLine(to: CGPoint(x: mid, y: size.height))
+            ctx.stroke(marker, with: .color(.primary), lineWidth: 1.5)
+        }
+        .frame(height: 34)
+        .mask(LinearGradient(colors: [.clear, .black, .black, .clear], startPoint: .leading, endPoint: .trailing))
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { g in
+                    let base = start ?? value
+                    if start == nil { start = value }
+                    #if os(macOS)
+                    let fine = NSEvent.modifierFlags.contains(.option) ? 0.1 : 1
+                    #else
+                    let fine = 1.0
+                    #endif
+                    let next = base - Double(g.translation.width / pointsPerMinor) * minor * fine
+                    let step = control == .exposure ? 0.01 : 0.005
+                    onChange(min(max((next / step).rounded() * step, control.range.lowerBound), control.range.upperBound))
+                }
+                .onEnded { _ in
+                    start = nil
+                    onCommit(value)
+                }
+        )
+        .modifier(ResetOnDoubleClick(reset: onReset))
+        #if os(macOS)
+        .onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
+        .help("Drag left or right. Hold Option for 10× finer. Double-click to reset.")
+        #else
+        // A tick on every labelled mark, like the level ruler's haptics.
+        .sensoryFeedback(.selection, trigger: Int((value / (minor * Double(major))).rounded(.towardZero)))
         #endif
     }
 }

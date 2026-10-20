@@ -291,16 +291,23 @@ final class Library {
 
     private static let lastPhotoKey = "lastPhotoByFolder"
 
+    /// A folder's key that survives the app's own container moving (iOS moves it on reinstall / update):
+    /// paths inside the home directory are stored relative to it ("~/Documents/Iceland").
+    private static func folderKey(_ folder: URL) -> String {
+        let path = folder.standardizedFileURL.path, home = URL(fileURLWithPath: NSHomeDirectory()).standardizedFileURL.path
+        return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
+    }
+
     private static func rememberLastPhoto(_ id: String, in folder: URL) {
         var all = UserDefaults.standard.dictionary(forKey: lastPhotoKey) as? [String: String] ?? [:]
-        guard all[folder.standardizedFileURL.path] != id else { return }
-        all[folder.standardizedFileURL.path] = id
+        guard all[folderKey(folder)] != id else { return }
+        all[folderKey(folder)] = id
         UserDefaults.standard.set(all, forKey: lastPhotoKey)
     }
 
     private static func forgetLastPhoto(in folder: URL) {
         var all = UserDefaults.standard.dictionary(forKey: lastPhotoKey) as? [String: String] ?? [:]
-        all[folder.standardizedFileURL.path] = nil
+        all[folderKey(folder)] = nil
         UserDefaults.standard.set(all, forKey: lastPhotoKey)
     }
 
@@ -308,7 +315,7 @@ final class Library {
     /// photo isn't in the default tab (Tilted), the folder opens on All so the photo and its neighbours are listed.
     private func restoreLastPhoto() {
         guard let folder,
-              let id = (UserDefaults.standard.dictionary(forKey: Self.lastPhotoKey) as? [String: String])?[folder.standardizedFileURL.path],
+              let id = (UserDefaults.standard.dictionary(forKey: Self.lastPhotoKey) as? [String: String])?[Self.folderKey(folder)],
               let p = byID[id] else { return }
         if !belongs(p, to: filter) { filter = .all }
         openPhoto(id)

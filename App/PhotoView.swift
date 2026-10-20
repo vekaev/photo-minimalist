@@ -103,6 +103,8 @@ struct PhotoView: View {
             if fixesMode {
                 FixesWorkspace(photo: photo, image: image, zoom: $zoom)
             } else {
+            HStack(spacing: 0) {
+            VStack(spacing: 0) {
             Group {
                 if compare == .sideBySide && !showOriginal {
                     HStack(spacing: 10) {
@@ -122,9 +124,15 @@ struct PhotoView: View {
                                  onAdd: addVersion, onLoad: loadVersion, onCompare: { showStudio = true })
                     .padding(.horizontal, 20).padding(.top, 10)
                 cropBar
-            } else if adjustMode {
-                adjustBar
             } else if levelMode { bottom }
+            }
+            // Adjust: the light dials in a sidebar beside the photo (like Fixes), so the photo keeps its height.
+            if adjustMode {
+                Theme.line.frame(width: 1)
+                adjustPanel.frame(width: 280)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+            }
             }
         }
         .background(Theme.ground)
@@ -707,37 +715,42 @@ struct PhotoView: View {
         library.setLight(photo.id, d)
     }
 
-    private var adjustBar: some View {
+    /// The Adjust sidebar: the five light dials stacked, then Auto / Reset / Done.
+    private var adjustPanel: some View {
         let value = lightDraft ?? photo.light ?? .zero
-        return VStack(spacing: 10) {
-            HStack(alignment: .center, spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Light").font(.system(size: 20, weight: .medium))
-                    Text(value.isIdentity ? "As shot · drag a slider, or Auto" : value.summary)
-                        .font(.caption).foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
-                }
-                Spacer()
+        return VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Light").font(.headline)
+                Text(value.isIdentity ? "As shot · drag a dial, or Auto" : value.summary)
+                    .font(.caption).foregroundStyle(.secondary).monospacedDigit().lineLimit(2)
+            }
+            ScrollView {
+                LightSliders(value: value,
+                             onChange: { lightDraft = $0 },
+                             onCommit: { a in library.setLight(photo.id, a); lightDraft = nil; focused = true },
+                             minColumn: 240)
+                    .padding(.vertical, 2)
+            }
+            .scrollIndicators(.never)
+            HStack(spacing: 8) {
                 Button("Auto") { lightDraft = nil; library.autoLight([photo.id]); focused = true }
                     .help("Let the app pick exposure, shadows, highlights and contrast for this photo")
                 Button("Reset") { lightDraft = nil; library.setLight(photo.id, nil, label: "Light reset"); focused = true }
                     .disabled(value.isIdentity)
+                Spacer()
                 Button { closeAdjust() } label: {
-                    Text("Done").fontWeight(.semibold).padding(.horizontal, 16).frame(height: 30)
+                    Text("Done").fontWeight(.semibold).padding(.horizontal, 16).frame(height: 28)
                         .foregroundStyle(Theme.ground).background(Color.primary, in: Capsule())
                 }
                 .buttonStyle(.plain)
                 .help("Close Adjust (↵ or Esc)")
             }
-            LightSliders(value: value,
-                         onChange: { lightDraft = $0 },
-                         onCommit: { a in library.setLight(photo.id, a); lightDraft = nil; focused = true })
-            Text("Double-click a slider to reset it · Space or hold M: original · ↵ / Esc done")
-                .font(.caption2).foregroundStyle(.tertiary)
-                .lineLimit(1).minimumScaleFactor(0.8)
+            Text("Drag a dial · ⌥ finer · double-click resets · Space or hold M: original")
+                .font(.caption2).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 12)
-        .padding(.bottom, 14)
+        .padding(16)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(Theme.panel)
     }
 
     // MARK: Guide line and loupes

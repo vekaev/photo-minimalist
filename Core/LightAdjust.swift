@@ -76,8 +76,8 @@ public struct LightAdjust: Codable, Equatable, Hashable, Sendable {
         /// "+0.7 EV" / "+35" / "0".
         public func format(_ v: Double) -> String {
             if self == .exposure {
-                if abs(v) < 0.005 { return "0.0" }
-                return String(format: "%+.1f", v)
+                if abs(v) < 0.005 { return "0.00" }
+                return String(format: "%+.2f", v)
             }
             let n = Int((v * 100).rounded())
             return n == 0 ? "0" : String(format: "%+d", n)

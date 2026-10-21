@@ -123,9 +123,19 @@ struct HorizonLevelerApp: App {
                 Button("Customize Controls…") { library.showControls = true }
                     .disabled(library.folder == nil)
             }
+            // Says what it will undo ("Undo Level DSCF0015", "Undo Crop Frame" in crop mode). A text field being
+            // edited (History search) keeps its own undo; while the History sheet is up the items stay enabled for it.
             CommandGroup(replacing: .undoRedo) {
-                Button("Undo") { library.undo() }.keyboardShortcut("z").disabled(!library.canUndo)
-                Button("Redo") { library.redo() }.keyboardShortcut("z", modifiers: [.command, .shift]).disabled(!library.canRedo)
+                Button(library.undoTitle) {
+                    if editingText { NSApp.sendAction(Selector(("undo:")), to: nil, from: nil) } else { library.undo() }
+                }
+                .keyboardShortcut("z")
+                .disabled(!library.canUndo && !library.showActivity)
+                Button(library.redoTitle) {
+                    if editingText { NSApp.sendAction(Selector(("redo:")), to: nil, from: nil) } else { library.redo() }
+                }
+                .keyboardShortcut("z", modifiers: [.command, .shift])
+                .disabled(!library.canRedo && !library.showActivity)
             }
             // The single-key shortcuts, visible in a menu. In a text field the key is just typed.
             CommandMenu("Photo") {

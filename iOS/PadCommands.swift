@@ -45,6 +45,8 @@ struct PadCommands: Commands {
         return library.showActivity || library.showSettings || library.pendingDelete != nil
     }
     private var photo: Photo? { busy ? nil : library?.photo(library?.openedID) }
+    /// The History sheet (with its search field) is up.
+    private var textUndo: Bool { library?.showActivity ?? false }
 
     var body: some Commands {
         CommandGroup(after: .newItem) {
@@ -52,13 +54,19 @@ struct PadCommands: Commands {
                 .keyboardShortcut("o")
                 .disabled(openFolder == nil)
         }
+        // Says what it will undo ("Undo Level DSCF0015"). A text field being edited (History search) keeps its own
+        // undo: while the History sheet is up the items stay enabled for it.
         CommandGroup(replacing: .undoRedo) {
-            Button("Undo") { library?.undo() }
-                .keyboardShortcut("z")
-                .disabled(busy || !(library?.canUndo ?? false))
-            Button("Redo") { library?.redo() }
-                .keyboardShortcut("z", modifiers: [.command, .shift])
-                .disabled(busy || !(library?.canRedo ?? false))
+            Button(busy ? "Undo" : library?.undoTitle ?? "Undo") {
+                if TextResponder.isEditing { TextResponder.current?.undoManager?.undo() } else if !busy { library?.undo() }
+            }
+            .keyboardShortcut("z")
+            .disabled(!textUndo && (busy || !(library?.canUndo ?? false)))
+            Button(busy ? "Redo" : library?.redoTitle ?? "Redo") {
+                if TextResponder.isEditing { TextResponder.current?.undoManager?.redo() } else if !busy { library?.redo() }
+            }
+            .keyboardShortcut("z", modifiers: [.command, .shift])
+            .disabled(!textUndo && (busy || !(library?.canRedo ?? false)))
         }
         // ⌘C copies the photo as shown; in a text field the standard edit actions still go to the field.
         CommandGroup(replacing: .pasteboard) {

@@ -26,6 +26,8 @@ struct EditorView: View {
     @State private var cropDraft = CropMath.full
     @AppStorage("ios.cropRatio") private var cropRatio: CropRatio = .original
     @State private var cropPortrait = false
+    /// This crop session's frame changes, for the undo button / ⌘Z while crop mode is open.
+    @State private var cropHistory = CropDraftHistory()
     @State private var guideY: CGFloat = 0.5
     /// The dashed suggested horizon, dragged up or down (fraction of the photo's height). Reset per photo.
     @State private var lineShift: CGFloat = 0
@@ -90,6 +92,8 @@ struct EditorView: View {
             .background(Color(.systemBackground))
             .deleteConfirmation(active: pad == nil)
             .focusedSceneValue(\.editorKeys, keys(photo))
+            // Undo (button, ⌘Z) steps through crop mode's frame changes, and takes back a placed point in the level tool.
+            .modifier(ToolUndoBridge(state: toolUndoState, perform: toolUndo))
             .sheet(isPresented: Binding(get: { pad == nil && showInfo }, set: { showInfo = $0 })) {
                 ScrollView { PhotoInfoCard(photo: photo).frame(maxWidth: .infinity, alignment: .leading).padding(20) }
                     .presentationDetents([.medium, .large])
@@ -197,7 +201,9 @@ struct EditorView: View {
             if shown < all.count {
                 Menu {
                     ForEach(all.dropFirst(shown)) { c in
-                        Button(role: c == .trash ? .destructive : nil) { perform(c, p) } label: { Label(c.title, systemImage: symbol(c, p)) }
+                        Button(role: c == .trash ? .destructive : nil) { perform(c, p) } label: {
+                            Label(c == .undo ? library.undoTitle : c.title, systemImage: symbol(c, p))
+                        }
                             .disabled(!enabled(c, p))
                     }
                 } label: {
@@ -264,6 +270,7 @@ struct EditorView: View {
         case .original: return showOriginal ? "Show the result" : "Show the original"
         case .level: return levelMode ? "Close the level tool" : "Level tool"
         case .adjust: return adjustMode ? "Close Adjust" : "Adjust light"
+        case .undo: return library.undoTitle   // "Undo Level DSCF0015"
         default: return c.title
         }
     }
@@ -337,7 +344,8 @@ struct EditorView: View {
                 photoLayer(frame: frame, rotation: rotation, area: area, crop: crop)
                 if cropMode {
                     CropOverlay(rect: $cropDraft, ratio: normalizedCropRatio, matte: [Color(.systemBackground)],
-                                visible: visible.offsetBy(dx: -frame.minX, dy: -frame.minY), paused: pinching)
+                                visible: visible.offsetBy(dx: -frame.minX, dy: -frame.minY), paused: pinching,
+                                onEnd: { noteCrop("Crop Frame") })
                         .frame(width: frame.width, height: frame.height)
                         .offset(x: frame.minX, y: frame.minY)
                 } else if !levelMode {
@@ -676,7 +684,32 @@ struct EditorView: View {
         cropDraft = p.crop ?? CropMath.full
         cropPortrait = false
         if p.crop == nil, let n = normalizedCropRatio { cropDraft = CropMath.fit(ratio: n, around: CGPoint(x: 0.5, y: 0.5)) }
+        cropHistory.start(cropState)
         withAnimation(.easeOut(duration: 0.15)) { cropMode = true }
+    }
+
+    private var cropState: CropDraftHistory.State { .init(rect: cropDraft, ratio: cropRatio, portrait: cropPortrait) }
+
+    /// One step of crop mode's own undo.
+    private func noteCrop(_ label: String) { cropHistory.push(cropState, label) }
+
+    /// What undo does here before the global steps: crop mode's frame changes (crop owns undo while open), or the
+    /// last placed point of a two-point pick.
+    private var toolUndoState: Library.ToolUndo? {
+        if cropMode { return cropHistory.toolUndo }
+        if levelMode && !pick.isEmpty { return Library.ToolUndo(undo: pick.isComplete ? "Second Point" : "Point") }
+        return nil
+    }
+
+    private func toolUndo(redo: Bool) {
+        if cropMode {
+            guard let s = cropHistory.step(redo: redo) else { return }
+            cropRatio = s.ratio
+            cropPortrait = s.portrait
+            withAnimation(.easeOut(duration: 0.15)) { cropDraft = s.rect }
+        } else if levelMode, !redo {
+            pick.removeLast()
+        }
     }
 
     private func applyRatio() {
@@ -689,7 +722,7 @@ struct EditorView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(CropRatio.allCases) { r in
-                        Button { cropRatio = r; applyRatio() } label: {
+                        Button { cropRatio = r; applyRatio(); noteCrop("Ratio " + r.label(flipped: cropPortrait)) } label: {
                             Text(r.label(flipped: cropRatio == r && cropPortrait)).font(.subheadline.weight(cropRatio == r ? .semibold : .regular))
                                 .padding(.horizontal, 12).frame(height: 32)
                                 .foregroundStyle(cropRatio == r ? Color(.systemBackground) : .primary)
@@ -697,7 +730,7 @@ struct EditorView: View {
                         }
                         .buttonStyle(.plain)
                     }
-                    Button { cropPortrait.toggle(); applyRatio() } label: {
+                    Button { cropPortrait.toggle(); applyRatio(); noteCrop("Flip Ratio") } label: {
                         Image(systemName: "arrow.trianglehead.2.clockwise.rotate.90").frame(width: 40, height: 32)
                     }
                     .disabled(!cropRatio.flippable)
@@ -706,7 +739,7 @@ struct EditorView: View {
                 .padding(.horizontal, 20)
             }
             HStack(spacing: 12) {
-                Button { cropDraft = CropMath.full } label: {
+                Button { cropDraft = CropMath.full; noteCrop("Reset Crop") } label: {
                     Text("Reset").frame(maxWidth: .infinity, minHeight: 50)
                         .overlay(Capsule().strokeBorder(Ink.rule, lineWidth: 1))
                 }
@@ -832,6 +865,7 @@ struct EditorView: View {
     private func loadVersion(_ v: CropVersion) {
         if let m = CropRatio.matching(v.ratio) { cropRatio = m.ratio; cropPortrait = m.flipped } else { cropRatio = .free }
         withAnimation(.easeOut(duration: 0.15)) { cropDraft = v.rect }
+        noteCrop("Load Crop Version")
     }
 
     // MARK: Level tool (bottom): angle, ruler, As shot | Leveled, Done

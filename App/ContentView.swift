@@ -351,8 +351,8 @@ struct MoreMenu: View {
                 get: { library.filter == .crops },
                 set: { library.filter = $0 ? .crops : .all }))
             PhotosMenu()
-            Button("Undo") { library.undo() }.disabled(!library.canUndo)
-            Button("Redo") { library.redo() }.disabled(!library.canRedo)
+            Button(library.undoTitle) { library.undo() }.disabled(!library.canUndo)
+            Button(library.redoTitle) { library.redo() }.disabled(!library.canRedo)
 
         } label: {
             Image(systemName: "ellipsis").frame(width: 28, height: 28).contentShape(Rectangle())

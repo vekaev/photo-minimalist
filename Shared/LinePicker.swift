@@ -70,6 +70,14 @@ struct LinePick: Equatable {
 
     mutating func clear() { self = LinePick() }
 
+    /// ⌘Z in the level tool: the last placed point goes first.
+    mutating func removeLast() {
+        guard !points.isEmpty else { return }
+        points.removeLast()
+        active = nil; start = nil; created = false; origin = nil; hover = nil
+        focus = points.indices.last
+    }
+
     private func dist(_ a: CGPoint, _ b: CGPoint) -> CGFloat { hypot(a.x - b.x, a.y - b.y) }
 }
 

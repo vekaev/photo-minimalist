@@ -52,6 +52,8 @@ struct PhotoView: View {
     @State private var cropDraft = CropMath.full
     @AppStorage("cropRatio") private var cropRatio: CropRatio = .original
     @State private var cropPortrait = false
+    /// This crop session's frame changes, for ⌘Z / ⇧⌘Z while crop mode is open.
+    @State private var cropHistory = CropDraftHistory()
     @State private var guideY: CGFloat = 0.5
     /// The dashed suggested horizon, dragged up or down (fraction of the photo's height). Reset per photo.
     @State private var lineShift: CGFloat = 0
@@ -149,6 +151,8 @@ struct PhotoView: View {
         }
         .onChange(of: image?.width) { if let image { photo.analysisAspect = CGFloat(image.width) / CGFloat(image.height) } }
         .onKeyPress(phases: [.down, .repeat, .up]) { handle($0) }
+        // ⌘Z / ⇧⌘Z step through crop mode's frame changes, and take back a placed point in the level tool.
+        .modifier(ToolUndoBridge(state: toolUndoState, enabled: !floating, perform: toolUndo))
         .task(id: photo.url) {
             // This view is reused from photo to photo: never keep showing the previous photo's image. Start from
             // whatever is cached for this one (thumbnail or sharp), and ignore loads that finish after moving on.
@@ -395,6 +399,7 @@ struct PhotoView: View {
         case .favorite: return photo.favorite ? "Unfavorite (F)" : "Favorite (F), also tags the file Red in Finder"
         case .compare: return "Compare: \(compare.label) (click for \(cycle(compare).label))"
         case .viewOptions: return "View options (S)"
+        case .undo: return library.undoTitle + " (⌘Z)"
         default: return c.title + (c.shortcut.map { " (\($0))" } ?? "")
         }
     }
@@ -552,7 +557,7 @@ struct PhotoView: View {
 
                 if interactive && cropMode {
                     CropOverlay(rect: $cropDraft, ratio: normalizedCropRatio, matte: [Theme.ground, Theme.raised.opacity(0.5)],
-                                visible: visible.offsetBy(dx: -frame.minX, dy: -frame.minY))
+                                visible: visible.offsetBy(dx: -frame.minX, dy: -frame.minY), onEnd: { noteCrop("Crop Frame") })
                         .frame(width: frame.width, height: frame.height)
                         .offset(x: frame.minX, y: frame.minY)
                 } else if interactive {
@@ -981,7 +986,32 @@ struct PhotoView: View {
         cropDraft = photo.crop ?? CropMath.full
         cropPortrait = false
         if photo.crop == nil, let n = normalizedCropRatio { cropDraft = CropMath.fit(ratio: n, around: CGPoint(x: 0.5, y: 0.5)) }
+        cropHistory.start(cropState)
         withAnimation(.easeOut(duration: 0.15)) { cropMode = true }
+    }
+
+    private var cropState: CropDraftHistory.State { .init(rect: cropDraft, ratio: cropRatio, portrait: cropPortrait) }
+
+    /// One step of crop mode's own undo.
+    private func noteCrop(_ label: String) { cropHistory.push(cropState, label) }
+
+    /// What ⌘Z / ⇧⌘Z do here before the global steps: crop mode's frame changes (crop owns ⌘Z while open), or the
+    /// last placed point of a two-point pick.
+    private var toolUndoState: Library.ToolUndo? {
+        if cropMode { return cropHistory.toolUndo }
+        if levelMode && !pick.isEmpty { return Library.ToolUndo(undo: pick.isComplete ? "Second Point" : "Point") }
+        return nil
+    }
+
+    private func toolUndo(redo: Bool) {
+        if cropMode {
+            guard let s = cropHistory.step(redo: redo) else { return }
+            cropRatio = s.ratio
+            cropPortrait = s.portrait
+            withAnimation(.easeOut(duration: 0.15)) { cropDraft = s.rect }
+        } else if levelMode, !redo {
+            pick.removeLast()
+        }
     }
 
     private func applyRatio() {
@@ -1007,13 +1037,14 @@ struct PhotoView: View {
     private func loadVersion(_ v: CropVersion) {
         if let m = CropRatio.matching(v.ratio) { cropRatio = m.ratio; cropPortrait = m.flipped } else { cropRatio = .free }
         withAnimation(.easeOut(duration: 0.15)) { cropDraft = v.rect }
+        noteCrop("Load Crop Version")
     }
 
     private var cropBar: some View {
         HStack(spacing: 10) {
             HStack(spacing: 4) {
                 ForEach(CropRatio.allCases) { r in
-                    Button { cropRatio = r; applyRatio() } label: {
+                    Button { cropRatio = r; applyRatio(); noteCrop("Ratio " + r.label(flipped: cropPortrait)) } label: {
                         Text(r.label(flipped: cropRatio == r && cropPortrait)).font(.callout.weight(cropRatio == r ? .semibold : .regular))
                             .padding(.horizontal, 10).frame(height: 28)
                             .foregroundStyle(cropRatio == r ? Theme.ground : .primary)
@@ -1023,14 +1054,17 @@ struct PhotoView: View {
                     .buttonStyle(.plain)
                 }
             }
-            Button { cropPortrait.toggle(); applyRatio() } label: {
+            Button { cropPortrait.toggle(); applyRatio(); noteCrop("Flip Ratio") } label: {
                 Image(systemName: "arrow.trianglehead.2.clockwise.rotate.90").frame(width: 28, height: 28)
             }
             .buttonStyle(.plain)
             .disabled(!cropRatio.flippable)
             .help("Flip the ratio (4:5 ↔ 5:4)")
             Spacer()
-            Button("Reset") { cropDraft = CropMath.full; if cropRatio != .free && cropRatio != .original { cropRatio = .original } }
+            Button("Reset") {
+                cropDraft = CropMath.full; if cropRatio != .free && cropRatio != .original { cropRatio = .original }
+                noteCrop("Reset Crop")
+            }
             Button("Cancel") { cancelCrop() }.keyboardShortcut(.cancelAction)
             Button { finishCrop() } label: {
                 Text("Done").fontWeight(.semibold).padding(.horizontal, 16).frame(height: 30)

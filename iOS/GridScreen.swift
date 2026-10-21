@@ -382,8 +382,10 @@ struct FolderMenu: View {
 
     var body: some View {
         Menu {
-            Button { library.undo() } label: { Label("Undo", systemImage: "arrow.uturn.backward") }
+            Button { library.undo() } label: { Label(library.undoTitle, systemImage: "arrow.uturn.backward") }
                 .disabled(!library.canUndo)
+            Button { library.redo() } label: { Label(library.redoTitle, systemImage: "arrow.uturn.forward") }
+                .disabled(!library.canRedo)
             Button { library.showActivity = true } label: { Label("History", systemImage: "clock.arrow.circlepath") }
             Button { library.applyAutoApprove() } label: {
                 Label("Apply all suggestions", systemImage: "wand.and.stars")

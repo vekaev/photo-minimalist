@@ -122,7 +122,7 @@ straighten crooked horizons in a keystroke, and crop. Native Swift, on-device, n
     </td>
     <td width="33%" valign="top">
       <h4>📐 Leveling and crop</h4>
-      Confident suggestions only (a corner chip), never auto-applied · a level tool (<kbd>R</kbd>) with the two-point picker with magnifiers · crop with ratios (Original, Free, 1:1, 4:5, 3:2, 16:9, flippable) · 0.1° ruler · guide line with ×5 loupes on both ends · fine / thirds / 12 / 24 line overlays · compare overlay, side by side or split · drag the dashed suggested horizon onto the real one · <b>crop versions</b>: save several crops (<kbd>V</kbd>), compare them side by side (<kbd>⇧C</kbd>) and pick the best · full history with jump-back · <b>folder history</b> (<kbd>⌘Y</kbd>, iPhone ⋯ ▸ History): every action in the folder, by day, searchable, with Revert (deletions come back from the Trash) · undo / redo across batches · <b>Move to Trash</b> (with the RAW twin) that <kbd>⌘Z</kbd> puts back.
+      Confident suggestions only (a corner chip), never auto-applied · a level tool (<kbd>R</kbd>) with the two-point picker with magnifiers · crop with ratios (Original, Free, 1:1, 4:5, 3:2, 16:9, flippable) · 0.1° ruler · guide line with ×5 loupes on both ends · fine / thirds / 12 / 24 line overlays · compare overlay, side by side or split · drag the dashed suggested horizon onto the real one · <b>crop versions</b>: save several crops (<kbd>V</kbd>), compare them side by side (<kbd>⇧C</kbd>) and pick the best · full history with jump-back (itself undoable) · <b>folder history</b> (<kbd>⌘Y</kbd>, iPhone ⋯ ▸ History): every action in the folder, by day, searchable, with Revert (deletions come back from the Trash) · undo / redo of every action, batches as one step, Save to Original included (⌘Z puts the file from before back) · <b>Move to Trash</b> (with the RAW twin) that <kbd>⌘Z</kbd> puts back.
     </td>
     <td width="33%" valign="top">
       <h4>📷 Formats</h4>
@@ -140,7 +140,7 @@ straighten crooked horizons in a keystroke, and crop. Native Swift, on-device, n
 | | | Level tool: click, click | Level through two points (<kbd>↵</kbd> apply, <kbd>Esc</kbd> cancel) |
 | <kbd>⌘C</kbd> · <kbd>⇧⌘C</kbd> · <kbd>⌥⌘C</kbd> | Copy as shown · RAW · original | <kbd>[</kbd> <kbd>]</kbd> · <kbd>⇧[</kbd> <kbd>⇧]</kbd> | Rotate ±0.1° · ±1° |
 | <kbd>⌘S</kbd> | Save to original (backup kept) | <kbd>0</kbd> | Reset |
-| <kbd>⌘Z</kbd> / <kbd>⇧⌘Z</kbd> | Undo / redo | <kbd>G</kbd> · <kbd>T</kbd> · <kbd>H</kbd> | Lines · guide · suggested horizon |
+| <kbd>⌘Z</kbd> / <kbd>⇧⌘Z</kbd> | Undo / redo every action (level, ♥, crop + versions, light, save to / restore original, Trash…); Edit menu says what ("Undo Level DSCF0015"); in crop mode it steps the frame, in the level tool it takes back a placed point | <kbd>G</kbd> · <kbd>T</kbd> · <kbd>H</kbd> | Lines · guide · suggested horizon |
 | <kbd>S</kbd> | Settings panel | <kbd>C</kbd> | Crop (<kbd>↵</kbd> done, <kbd>Esc</kbd> cancel) |
 | | | <kbd>E</kbd> | Adjust light: exposure, brightness, contrast, highlights, shadows, Auto (<kbd>↵</kbd> / <kbd>Esc</kbd> done, double-click a slider resets it) |
 | <kbd>F</kbd> | Favorite (♥, Red tag in Finder) | <kbd>I</kbd> | Photo info (date, camera, exposure, sizes) |

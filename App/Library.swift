@@ -78,17 +78,62 @@ final class Library {
         didSet { UserDefaults.standard.set(advanceAfterDecision, forKey: "advanceAfterDecision") }
     }
 
-    /// One ⌘Z step: edits to some photos, or a move to the Trash.
-    private enum UndoStep {
-        /// The photos, and the journal summary for "Undo: …".
-        case edit([String], String)
+    /// One ⌘Z step: edits to some photos, a save to / restore of the original files, or a move to the Trash.
+    /// Every user action pushes exactly one (a batch is one step); ⇧⌘Z replays it.
+    fileprivate enum UndoStep {
+        /// Each photo's edit state (history + position, ♥, crop versions) before and after.
+        case edit(EditStep)
+        /// Save to Original / Restore Original: files swapped on disk plus the photos' whole saved state.
+        case file(FileStep)
         case delete(Deletion)
         /// Redo of an undone deletion: these photos go to the Trash again.
         case redelete([String])
         var isDelete: Bool { if case .delete = self { return true } else { return false } }
     }
-    private var undoStack: [UndoStep] = []
-    private var redoStack: [UndoStep] = []
+    fileprivate struct EditStep {
+        let id = UUID()
+        /// "Level DSCF0015" for the Edit menu ("Undo Level DSCF0015").
+        var menu: String
+        /// The journal summary, for "Undo: …".
+        var summary: String
+        var before: [String: Photo.EditState]
+        var after: [String: Photo.EditState]
+        /// The photos in list order.
+        var ids: [String]
+    }
+    fileprivate struct FileStep {
+        var menu: String
+        var summary: String
+        var items: [FileItem]
+    }
+    /// One photo's file before and after a save / restore. A side "with a backup" means the file is a rendered version
+    /// and the untouched original sits in `.horizonleveler-originals/`; a side without one means the file *is* the
+    /// original. A rendered side's bytes wait in its slot (`.horizonleveler-originals/.undo/`) while the other side
+    /// is shown; the original never leaves the backup or the file itself.
+    fileprivate struct FileItem {
+        let id: String
+        var before: Photo.Saved
+        var after: Photo.Saved
+        let beforeHasBackup: Bool
+        let afterHasBackup: Bool
+        let beforeSlot: URL
+        let afterSlot: URL
+    }
+    /// A tool's own small undo, taken by ⌘Z / ⇧⌘Z before the global steps: crop mode's frame changes, the level
+    /// tool's two-point pick. The view sets the titles (nil = nothing that way) and watches `toolUndoRequest`.
+    struct ToolUndo: Equatable {
+        var undo: String?
+        var redo: String?
+        /// The tool owns ⌘Z while it's open (crop mode): with no step of its own, nothing global is undone under it.
+        var exclusive = false
+    }
+    var toolUndo: ToolUndo?
+    /// Bumped by ⌘Z / ⇧⌘Z while `toolUndo` has a step: the view that set `toolUndo` steps its draft.
+    struct ToolUndoRequest: Equatable { var id = 0; var redo = false }
+    var toolUndoRequest = ToolUndoRequest()
+
+    fileprivate var undoStack: [UndoStep] = []
+    fileprivate var redoStack: [UndoStep] = []
     /// iPhone: photos waiting for the "Move to the Trash?" dialog (the Mac uses an NSAlert).
     var pendingDelete: [String]?
     /// The toast that gets an Undo button (iPhone) after a deletion.
@@ -245,6 +290,7 @@ final class Library {
     func open(_ url: URL) {
         analysisTask?.cancel()
         saveNow()
+        discardAllSlots()
         // Folders picked in Files (iOS) are security-scoped: hold access while the folder is open.
         scopedFolder?.stopAccessingSecurityScopedResource()
         scopedFolder = url.startAccessingSecurityScopedResource() ? url : nil
@@ -260,6 +306,8 @@ final class Library {
         openedID = nil
         undoStack = []
         redoStack = []
+        toolUndo = nil
+        discardAllSlots()
         resetActivity(Journal(folder: url))
         let saved = loadState(url)
         let base = url.standardizedFileURL.path + "/"
@@ -414,7 +462,8 @@ final class Library {
     }
 
     private func finishAnalysis(id: String, detection: Detection?) {
-        guard let p = byID[id] else { return }
+        // Already analyzed: an undo put the photo's earlier file and detection back while this one was being read.
+        guard let p = byID[id], !p.analyzed else { return }
         p.detection = detection
         p.analyzed = true
         p.analysisVersion = HorizonDetector.version
@@ -437,6 +486,10 @@ final class Library {
     func closeFolder(notice: String? = nil) {
         analysisTask?.cancel()
         saveNow()
+        discardAllSlots()
+        undoStack = []
+        redoStack = []
+        toolUndo = nil
         folder = nil
         photos = []
         byID = [:]
@@ -459,7 +512,7 @@ final class Library {
             p.decision == .level && p.index == p.history.count - 1 && p.history.count == 2 && p.history[1].label.hasPrefix("Auto")
         }
         guard !auto.isEmpty else { return }
-        let before = journalStates(auto.map(\.id))
+        let before = begin(auto.map(\.id))
         for p in auto { p.record(.undecided, correction: p.correction, label: "Automatic level undone") }
         commit(auto.map(\.id), .undecided, before: before, summary: "Sent \(auto.count) automatic level\(auto.count == 1 ? "" : "s") back to review")
     }
@@ -484,13 +537,17 @@ final class Library {
 
     /// Writes the leveled photo over the original JPEG/HEIC/TIFF. The first time, the untouched file is moved
     /// to a hidden backup folder; every save renders from that untouched file, so quality never degrades.
+    /// One undo step: ⌘Z puts the file from before back (the original from the backup, or the earlier save from its
+    /// undo slot) with the photo's edits as they were; ⇧⌘Z puts the saved file back.
     func saveToOriginals(_ ids: [String], progress: @escaping @MainActor (Int, Int) -> Void = { _, _ in }) async -> (saved: Int, failed: [String]) {
         let items = savable(ids)
-        var saved = 0, failed: [String] = [], savedIDs: [String] = []
+        var saved = 0, failed: [String] = [], savedIDs: [String] = [], undoItems: [FileItem] = []
         let before = journalStates(items.map(\.id))
         for (i, p) in items.enumerated() {
             progress(i, items.count)
-            guard let backup = backupURL(for: p) else { continue }
+            guard let backup = backupURL(for: p), let slots = undoSlots(for: p) else { continue }
+            let state = p.saved
+            let hadBackup = FileManager.default.fileExists(atPath: backup.path)
             // Render from the untouched backup with the total rotation, unless an earlier save already cropped
             // the file: then the current file is the base (a crop can't be re-derived from the backup).
             let fromBackup = !p.savedHadCrop
@@ -510,14 +567,17 @@ final class Library {
             let result: String? = await Task.detached(priority: .userInitiated) {
                 let fm = FileManager.default
                 do {
-                    if !fm.fileExists(atPath: backup.path) {
+                    if !hadBackup {
                         try fm.createDirectory(at: backup.deletingLastPathComponent(), withIntermediateDirectories: true)
                         try fm.copyItem(at: source, to: backup)
                     }
                     let temp = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString + "." + source.pathExtension)
                     try Renderer.export(source: fromBackup ? backup : source, degrees: total, crop: crop, bandFix: band,
                                         light: light, priorLights: priorLights, to: temp, format: format, quality: 0.96)
-                    _ = try fm.replaceItemAt(source, withItemAt: temp)
+                    // An earlier save is in the file: keep it in the undo slot (⌘Z puts it back). Without a backup
+                    // before, the file was the untouched original, which the backup now holds.
+                    if hadBackup { try Library.replace(source, with: temp, keepingOldIn: slots.before) }
+                    else { _ = try fm.replaceItemAt(source, withItemAt: temp) }
                     return nil
                 } catch { return error.localizedDescription }
             }.value
@@ -530,14 +590,20 @@ final class Library {
                          + (band != nil ? " · bands fixed" : "") + (light != nil ? " · light" : ""))
             ImageCache.shared.evict(p.url)
             BandFixStore.shared.evict(p.url)
-            analyzedCount -= 1
+            if state.analyzed { analyzedCount -= 1 }
             saved += 1
             savedIDs.append(p.id)
+            undoItems.append(FileItem(id: p.id, before: state, after: p.saved, beforeHasBackup: hadBackup, afterHasBackup: true,
+                                      beforeSlot: slots.before, afterSlot: slots.after))
         }
         progress(items.count, items.count)
-        logActivity(.saveToOriginal, savedIDs, before: before,
-                    extra: JournalExtra(backups: savedIDs.compactMap { byID[$0].flatMap(backupURL(for:))?.path }), keepUnchanged: true)
-        dropEditUndo()    // the files changed; old undo steps no longer apply (deletions still can be undone)
+        let text = logActivity(.saveToOriginal, savedIDs, before: before,
+                               extra: JournalExtra(backups: savedIDs.compactMap { byID[$0].flatMap(backupURL(for:))?.path }), keepUnchanged: true)
+        if !undoItems.isEmpty {
+            // Earlier steps stay valid: ⌘Z on this one gives the photos their history back before they're reached.
+            pushUndo(.file(FileStep(menu: Self.menuName(.saveToOriginal, savedIDs), summary: text ?? "Save to original",
+                                    items: undoItems)))
+        }
         saveNow()
         analyze()
         return (saved, failed)
@@ -551,40 +617,139 @@ final class Library {
                                  : "Saved \(r.saved), \(r.failed.count) failed"
     }
 
-    /// Puts the untouched file back from the backup folder.
+    /// Puts the untouched file back from the backup folder. One undo step: ⌘Z puts the saved file (kept in an undo
+    /// slot) back, with the backup and the photo's state as they were.
     func restoreOriginals(_ ids: [String], reverting entry: JournalEntry? = nil) {
-        var restored = 0, restoredIDs: [String] = []
+        var restored = 0, restoredIDs: [String] = [], undoItems: [FileItem] = []
         let before = journalStates(ids)
         for p in ids.compactMap({ byID[$0] }) {
-            guard let backup = backupURL(for: p), FileManager.default.fileExists(atPath: backup.path) else { continue }
+            guard let backup = backupURL(for: p), FileManager.default.fileExists(atPath: backup.path),
+                  let slots = undoSlots(for: p) else { continue }
+            let state = p.saved
             do {
-                _ = try FileManager.default.replaceItemAt(p.url, withItemAt: backup)
+                try Self.replace(p.url, with: backup, keepingOldIn: slots.before)
                 p.savedCorrection = 0
+                p.savedHadCrop = false
                 p.savedBandFix = nil
                 p.savedLights = []
                 p.startFresh(label: "Original restored")
                 ImageCache.shared.evict(p.url)
                 BandFixStore.shared.evict(p.url)
-                analyzedCount -= 1
+                if state.analyzed { analyzedCount -= 1 }
                 restored += 1
                 restoredIDs.append(p.id)
+                undoItems.append(FileItem(id: p.id, before: state, after: p.saved, beforeHasBackup: true, afterHasBackup: false,
+                                          beforeSlot: slots.before, afterSlot: slots.after))
             } catch {
                 toast = "Couldn't restore \(p.name): \(error.localizedDescription)"
             }
         }
+        let text: String?
         if let entry {
             if restored == 0 { toast = "No backup left to restore" }
-            logActivity(.revert, restoredIDs, before: [:], summary: "Reverted: " + entry.summary,
-                        extra: JournalExtra(revertOf: entry.id), keepUnchanged: true)
+            text = logActivity(.revert, restoredIDs, before: [:], summary: "Reverted: " + entry.summary,
+                               extra: JournalExtra(revertOf: entry.id), keepUnchanged: true)
         } else {
-            logActivity(.restoreOriginal, restoredIDs, before: before, keepUnchanged: true)
+            text = logActivity(.restoreOriginal, restoredIDs, before: before, keepUnchanged: true)
         }
         if restored > 0 {
-            dropEditUndo()
+            pushUndo(.file(FileStep(menu: Self.menuName(.restoreOriginal, restoredIDs), summary: text ?? "Restore original",
+                                    items: undoItems)))
             toast = restored == 1 ? "Original restored" : "\(restored) originals restored"
             saveNow()
             analyze()
         }
+    }
+
+    // MARK: Undo of files (Save to Original / Restore Original)
+
+    static let undoSlotFolderName = ".undo"
+
+    /// Two fresh slots for one save / restore: where the file before and the file after wait while the other is shown.
+    private func undoSlots(for p: Photo) -> (before: URL, after: URL)? {
+        guard let folder else { return nil }
+        let dir = folder.appendingPathComponent(Self.backupFolderName, isDirectory: true)
+            .appendingPathComponent(Self.undoSlotFolderName, isDirectory: true)
+        let ext = p.url.pathExtension, key = UUID().uuidString
+        return (dir.appendingPathComponent(key + "-before." + ext), dir.appendingPathComponent(key + "-after." + ext))
+    }
+
+    /// Replaces `url` with `source` (which is moved) in one step, keeping the file that was there in `keep`.
+    nonisolated static func replace(_ url: URL, with source: URL, keepingOldIn keep: URL) throws {
+        let fm = FileManager.default
+        try fm.createDirectory(at: keep.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if fm.fileExists(atPath: keep.path) { try fm.removeItem(at: keep) }
+        let name = ".hl-undo-" + UUID().uuidString + "." + url.pathExtension
+        _ = try fm.replaceItemAt(url, withItemAt: source, backupItemName: name, options: [.withoutDeletingBackupItem])
+        let old = url.deletingLastPathComponent().appendingPathComponent(name)
+        if fm.fileExists(atPath: old.path) { try fm.moveItem(at: old, to: keep) }
+    }
+
+    /// Undo (`toBefore`) or redo of a save / restore: each photo's file goes to that side and the photo gets that
+    /// side's saved state back (the side being left is remembered, e.g. a detection made meanwhile). Photos whose
+    /// file couldn't be swapped are left as they are and dropped from the step.
+    private func swapFiles(_ items: [FileItem], toBefore: Bool) -> [FileItem] {
+        let fm = FileManager.default
+        var done: [FileItem] = [], failed: [String] = []
+        for var item in items {
+            guard let p = byID[item.id], let backup = backupURL(for: p) else { failed.append(Self.shortName(item.id)); continue }
+            let fromBackup = toBefore ? item.afterHasBackup : item.beforeHasBackup
+            let toBackup = toBefore ? item.beforeHasBackup : item.afterHasBackup
+            let leaving = toBefore ? item.afterSlot : item.beforeSlot
+            let target = toBefore ? item.beforeSlot : item.afterSlot
+            do {
+                switch (fromBackup, toBackup) {
+                case (true, true):
+                    // A rendered file for another rendered file: both wait in slots.
+                    guard fm.fileExists(atPath: target.path) else { throw CocoaError(.fileNoSuchFile) }
+                    try Self.replace(p.url, with: target, keepingOldIn: leaving)
+                case (true, false):
+                    // Back to the untouched original: it moves from the backup into place (as Restore Original does).
+                    guard fm.fileExists(atPath: backup.path) else { throw CocoaError(.fileNoSuchFile) }
+                    try Self.replace(p.url, with: backup, keepingOldIn: leaving)
+                case (false, true):
+                    // The file is the original: it becomes the backup again (a copy first), then the rendered file goes in.
+                    guard fm.fileExists(atPath: target.path) else { throw CocoaError(.fileNoSuchFile) }
+                    if !fm.fileExists(atPath: backup.path) {
+                        try fm.createDirectory(at: backup.deletingLastPathComponent(), withIntermediateDirectories: true)
+                        try fm.copyItem(at: p.url, to: backup)
+                    }
+                    _ = try fm.replaceItemAt(p.url, withItemAt: target)
+                case (false, false):
+                    break
+                }
+            } catch {
+                Self.log("undo file \(p.name): \(error.localizedDescription)")
+                failed.append(p.name)
+                continue
+            }
+            let now = p.saved
+            let state = toBefore ? item.before : item.after
+            if toBefore { item.after = now } else { item.before = now }
+            if now.analyzed != state.analyzed { analyzedCount += state.analyzed ? 1 : -1 }
+            p.restoreExactly(state)
+            ImageCache.shared.evict(p.url)
+            BandFixStore.shared.evict(p.url)
+            done.append(item)
+        }
+        if !failed.isEmpty { toast = "Couldn't put back " + failed.joined(separator: ", ") }
+        saveNow()
+        if done.contains(where: { byID[$0.id]?.analyzed == false }) { analyze() }
+        return done
+    }
+
+    /// Deletes a forgotten step's slots (they only ever hold rendered saves, never an original).
+    private func discardSlots(_ f: FileStep) {
+        let fm = FileManager.default
+        for item in f.items { for url in [item.beforeSlot, item.afterSlot] where fm.fileExists(atPath: url.path) { try? fm.removeItem(at: url) } }
+    }
+
+    /// Opening / closing a folder starts a new undo history: its slots go.
+    private func discardAllSlots() {
+        guard let folder else { return }
+        let dir = folder.appendingPathComponent(Self.backupFolderName, isDirectory: true)
+            .appendingPathComponent(Self.undoSlotFolderName, isDirectory: true)
+        if FileManager.default.fileExists(atPath: dir.path) { try? FileManager.default.removeItem(at: dir) }
     }
 
     /// The photos ⌘C / Copy act on: the open photo in the preview, else the grid selection.
@@ -600,7 +765,7 @@ final class Library {
     func decide(_ ids: [String], _ decision: Decision) {
         let changed = ids.compactMap { byID[$0] }.filter { $0.decision != decision }
         guard !changed.isEmpty else { return }
-        let before = journalStates(changed.map(\.id))
+        let before = begin(changed.map(\.id))
         for p in changed {
             var c = p.correction
             if decision == .level, c == 0, let d = p.detection { c = d.correction }
@@ -647,6 +812,8 @@ final class Library {
     /// the view moved on to the next photo.
     var justLeveled: [String] = []
     private var justLeveledToken = 0
+    /// The undo step quickLevel pushed, so the chip's Undo is that step's ⌘Z (and ⇧⌘Z levels again).
+    private var justLeveledStep: UUID?
 
     /// Level, and when the open photo is among them, open the level tool right away so the angle can be
     /// fine-tuned (ruler, two points, [ ]). L, right-click ▸ Level, Photo ▸ Level and the corner chip.
@@ -672,6 +839,7 @@ final class Library {
             #endif
         }
         justLeveled = changing
+        if case .edit(let e)? = undoStack.last, Set(e.ids) == Set(changing) { justLeveledStep = e.id } else { justLeveledStep = nil }
         justLeveledToken += 1
         let token = justLeveledToken
         Task { @MainActor [weak self] in
@@ -684,10 +852,13 @@ final class Library {
     /// "Undo" on the chip: those photos go back to undecided and the (first) one is shown again.
     func undoQuickLevel() {
         let ids = justLeveled.filter { byID[$0] != nil }
+        let step = justLeveledStep
         justLeveled = []
+        justLeveledStep = nil
         justLeveledToken += 1
         guard let first = ids.first else { return }
-        decide(ids, .undecided)
+        // Still the last step: it's exactly ⌘Z. Otherwise (something else happened since) a new step back to undecided.
+        if let step, case .edit(let e)? = undoStack.last, e.id == step { undoStep() } else { decide(ids, .undecided) }
         if openedID != nil { openPhoto(first) } else { selection = Set(ids) }
     }
 
@@ -713,22 +884,21 @@ final class Library {
         let items = ids.compactMap { byID[$0] }
         guard !items.isEmpty else { return }
         let value = items.contains { !$0.favorite }
-        let before = journalStates(items.map(\.id))
-        for p in items { p.favorite = value }
-        logActivity(value ? .favorite : .unfavorite, items.map(\.id), before: before)
-        #if os(macOS)
-        FinderTag.set(value, on: items.flatMap { [$0.url] + $0.companions })
-        #endif
-        saveSoon()
-        if !value, filter == .favorites { removeFromList(items.map(\.id)) }
-        mirrorFavoriteInPhotos(items.map(\.url), value)
+        let before = begin(items.map(\.id))
+        var was: [String: Bool] = [:]
+        for p in items { was[p.id] = p.favorite; p.favorite = value }
+        commit(items.map(\.id), value ? .favorite : .unfavorite, before: before)
+        favoritesChanged(from: was)
     }
 
     static let photosFavoriteSyncKey = "photosFavoriteSync"
+    /// Tests: replaces the Apple Photos call (never touch the real library from a harness).
+    nonisolated(unsafe) static var mirrorFavoriteHook: (([URL], Bool) -> Void)?
 
     /// ♥ here = ♥ in Apple Photos for copies already imported there (Settings ▸ "Mirror favorites in Apple Photos",
     /// on by default). The first time, Photos asks for access; if it's refused, a toast says where to change it.
     private func mirrorFavoriteInPhotos(_ urls: [URL], _ value: Bool) {
+        if let hook = Self.mirrorFavoriteHook { hook(urls, value); return }
         guard UserDefaults.standard.object(forKey: Self.photosFavoriteSyncKey) as? Bool ?? true else { return }
         Task { [weak self] in
             do { try await PhotosSync.setFavorite(urls, to: value) }
@@ -805,7 +975,7 @@ final class Library {
     /// Sets (or clears, with nil) the crop. Marks the photo to be edited, like leveling does.
     func setCrop(_ id: String, _ crop: CGRect?, label: String) {
         guard let p = byID[id] else { return }
-        let before = journalStates([id])
+        let before = begin([id])
         recordCrop(p, crop, label: label)
         commit([id], .crop, before: before)
     }
@@ -827,7 +997,7 @@ final class Library {
     /// `action` for the journal; by default "Two points …" labels are two-point leveling, anything else the ruler.
     func setCorrection(_ id: String, _ degrees: Double, label: String? = nil, action: JournalAction? = nil) {
         guard let p = byID[id] else { return }
-        let before = journalStates([id])
+        let before = begin([id])
         let value = (min(max(degrees, -45), 45) * 100).rounded() / 100
         p.record(.level, correction: value, label: label ?? "Correction " + Geometry.format(value))
         commit([id], action ?? (label?.hasPrefix("Two points") == true ? .twoPoint : .ruler), before: before)
@@ -846,39 +1016,145 @@ final class Library {
     func resetToOriginal(_ ids: [String]) {
         let changed = ids.compactMap { byID[$0] }.filter { $0.decision != .undecided || $0.correction != 0 }
         guard !changed.isEmpty else { return }
-        let before = journalStates(changed.map(\.id))
+        let before = begin(changed.map(\.id))
         for p in changed { p.record(.undecided, correction: 0, label: "Reset to original") }
         commit(changed.map(\.id), .reset, before: before)
     }
 
     func jump(_ id: String, to index: Int) {
-        let before = journalStates([id])
-        byID[id]?.jump(to: index)
-        if let p = byID[id] {
-            logActivity(.jump, [id], before: before, summary: "\(Self.shortName(id)): back to “\(p.current.label)”")
+        guard let p = byID[id] else { return }
+        let before = begin([id])
+        p.jump(to: index)
+        // One undo step: ⌘Z goes back to where the photo was before the jump (the whole history list is kept).
+        commit([id], .jump, before: before, summary: "\(Self.shortName(id)): back to “\(p.current.label)”")
+    }
+
+    /// The photos' state before a change: for the journal and for the undo step.
+    struct Before {
+        var journal: [String: JournalState]
+        var edits: [String: Photo.EditState]
+    }
+
+    func begin(_ ids: [String]) -> Before {
+        var edits: [String: Photo.EditState] = [:]
+        for id in ids { if let p = byID[id] { edits[id] = p.editState } }
+        return Before(journal: journalStates(ids), edits: edits)
+    }
+
+    /// One undo step plus one journal entry. Only photos whose state really changed count; nothing changed = no step.
+    /// `menu` overrides the Edit menu's name for it ("Auto Light").
+    private func commit(_ ids: [String], _ action: JournalAction, before: Before, summary: String? = nil, menu: String? = nil) {
+        let text = logActivity(action, ids, before: before.journal, summary: summary)
+        pushEdit(ids, before: before, menu: menu ?? Self.menuName(action, ids.filter { before.edits[$0] != byID[$0]?.editState }),
+                 summary: text ?? summary ?? describe(action, ids, after: [:]))
+        saveSoon()
+    }
+
+    /// The undo step for a change already made (and logged). Returns false when nothing changed.
+    @discardableResult
+    private func pushEdit(_ ids: [String], before: Before, menu: String, summary: String) -> Bool {
+        var b: [String: Photo.EditState] = [:], a: [String: Photo.EditState] = [:], changed: [String] = []
+        for id in ids {
+            guard let old = before.edits[id], let now = byID[id]?.editState, old != now, b[id] == nil else { continue }
+            b[id] = old; a[id] = now; changed.append(id)
         }
-        saveSoon()
+        guard !changed.isEmpty else { return false }
+        pushUndo(.edit(EditStep(menu: menu, summary: summary, before: b, after: a, ids: changed)))
+        return true
     }
 
-    /// One undo step plus one journal entry (`before` = the photos' states before the change).
-    private func commit(_ ids: [String], _ action: JournalAction, before: [String: JournalState], summary: String? = nil) {
-        let text = logActivity(action, ids, before: before, summary: summary)
-        undoStack.append(.edit(ids, text ?? summary ?? describe(action, ids, after: [:])))
-        redoStack.removeAll()
-        saveSoon()
+    private func pushUndo(_ step: UndoStep) {
+        undoStack.append(step)
+        clearRedo()
     }
 
-    var canUndo: Bool { !undoStack.isEmpty }
-    var canRedo: Bool { !redoStack.isEmpty }
+    private func clearRedo() {
+        let dropped = redoStack
+        redoStack = []
+        for case .file(let f) in dropped { discardSlots(f) }
+    }
+
+    /// "Level DSCF0015", "Favorite 3 Photos": what the Edit menu says after Undo / Redo.
+    static func menuName(_ action: JournalAction, _ ids: [String]) -> String {
+        let verb: String
+        switch action {
+        case .level: verb = "Level"
+        case .keep: verb = "Keep as Shot"
+        case .undecided: verb = "Undecided"
+        case .reset: verb = "Reset Decision"
+        case .tilt: verb = "Suggested Angle"
+        case .ruler: verb = "Rotate"
+        case .twoPoint: verb = "Two-Point Level"
+        case .nudge: verb = "Nudge"
+        case .autoLevel: verb = "Auto Level"
+        case .jump: verb = "History Jump"
+        case .crop: verb = "Crop"
+        case .versionAdd: verb = "Add Crop Version"
+        case .versionChoose: verb = "Choose Crop Version"
+        case .versionRemove: verb = "Remove Crop Version"
+        case .bandFix: verb = "Band Fix"
+        case .light: verb = "Light"
+        case .favorite: verb = "Favorite"
+        case .unfavorite: verb = "Unfavorite"
+        case .delete: verb = "Move to Trash"
+        case .restoreFromTrash: verb = "Put Back"
+        case .saveToOriginal: verb = "Save to Original"
+        case .restoreOriginal: verb = "Restore Original"
+        case .revert: verb = "Revert"
+        case .addToPhotos, .photosFavorites, .export, .undo, .redo, .other: verb = "Change"
+        }
+        return verb + subject(ids)
+    }
+
+    /// " DSCF0015" or " 3 Photos" (empty for none).
+    static func subject(_ ids: [String]) -> String {
+        switch ids.count {
+        case 0: return ""
+        case 1: return " " + shortName(ids[0])
+        default: return " \(ids.count) Photos"
+        }
+    }
+
+    private static func menu(of step: UndoStep) -> String {
+        switch step {
+        case .edit(let e): return e.menu
+        case .file(let f): return f.menu
+        case .delete(let d): return menuName(.delete, d.items.map(\.photo.id))
+        case .redelete(let ids): return menuName(.delete, ids)
+        }
+    }
+
+    var canUndo: Bool { toolUndo?.undo != nil || (toolUndo?.exclusive != true && !undoStack.isEmpty) }
+    var canRedo: Bool { toolUndo?.redo != nil || (toolUndo?.exclusive != true && !redoStack.isEmpty) }
+    /// Edit ▸ Undo's title: "Undo Level DSCF0015", "Undo Crop Frame", or plain "Undo" when there's nothing.
+    var undoTitle: String {
+        if let t = toolUndo?.undo { return "Undo " + t }
+        if toolUndo?.exclusive == true { return "Undo" }
+        return undoStack.last.map { "Undo " + Self.menu(of: $0) } ?? "Undo"
+    }
+    var redoTitle: String {
+        if let t = toolUndo?.redo { return "Redo " + t }
+        if toolUndo?.exclusive == true { return "Redo" }
+        return redoStack.last.map { "Redo " + Self.menu(of: $0) } ?? "Redo"
+    }
 
     func undo() {
+        if toolUndo?.undo != nil { toolUndoRequest = ToolUndoRequest(id: toolUndoRequest.id + 1, redo: false); return }
+        if toolUndo?.exclusive == true { return }
+        undoStep()
+    }
+
+    /// The last global step, whatever tool is open (the chip's Undo).
+    private func undoStep() {
         guard let step = undoStack.popLast() else { return }
         switch step {
-        case .edit(let ids, let label):
-            let before = journalStates(ids)
-            ids.forEach { byID[$0]?.undo() }
+        case .edit(let e):
+            applyEdits(e.before, ids: e.ids, journal: .undo, summary: "Undo: " + e.summary)
             redoStack.append(step)
-            logActivity(.undo, ids, before: before, summary: "Undo: " + label)
+        case .file(var f):
+            f.items = swapFiles(f.items, toBefore: true)
+            logActivity(.undo, f.items.map(\.id), before: [:], summary: "Undo: " + f.summary, keepUnchanged: true)
+            if !f.items.isEmpty { redoStack.append(.file(f)) }
         case .delete(let d):
             let back = restoreDeletion(d, prefix: "Undo: ")
             if !back.isEmpty { redoStack.append(.redelete(back)) }
@@ -888,6 +1164,8 @@ final class Library {
     }
 
     func redo() {
+        if toolUndo?.redo != nil { toolUndoRequest = ToolUndoRequest(id: toolUndoRequest.id + 1, redo: true); return }
+        if toolUndo?.exclusive == true { return }
         guard let step = redoStack.popLast() else { return }
         switch step {
         case .redelete(let ids):
@@ -895,20 +1173,63 @@ final class Library {
             let keep = redoStack
             delete(ids, prefix: "Redo: ")
             redoStack = keep
-        case .edit(let ids, let label):
-            let before = journalStates(ids)
-            ids.forEach { byID[$0]?.redo() }
+        case .edit(let e):
+            applyEdits(e.after, ids: e.ids, journal: .redo, summary: "Redo: " + e.summary)
             undoStack.append(step)
-            logActivity(.redo, ids, before: before, summary: "Redo: " + label)
+            saveSoon()
+        case .file(var f):
+            f.items = swapFiles(f.items, toBefore: false)
+            logActivity(.redo, f.items.map(\.id), before: [:], summary: "Redo: " + f.summary, keepUnchanged: true)
+            if !f.items.isEmpty { undoStack.append(.file(f)) }
             saveSoon()
         case .delete: break
         }
     }
 
-    /// Forget edit steps (the files changed under them) but keep deletions, which only need the Trash.
-    private func dropEditUndo() {
-        undoStack.removeAll { !$0.isDelete }
-        redoStack = []
+    /// Puts photos' edit states back (undo / redo), with what a ♥ change does on the way (Finder tag, Apple Photos,
+    /// the Favorites list).
+    private func applyEdits(_ states: [String: Photo.EditState], ids: [String], journal action: JournalAction, summary: String) {
+        let now = journalStates(ids)
+        var wasFavorite: [String: Bool] = [:]
+        for id in ids {
+            guard let p = byID[id], let s = states[id] else { continue }
+            wasFavorite[id] = p.favorite
+            p.restoreEdits(s)
+        }
+        favoritesChanged(from: wasFavorite)
+        logActivity(action, ids, before: now, summary: summary)
+    }
+
+    /// After photos' ♥ changed (`was` = before): Finder's Red tag (Mac), the Photos mirror, and the Favorites list
+    /// (un-♥ while viewing Favorites takes them out; ♥ again, e.g. by undo, puts them back).
+    private func favoritesChanged(from was: [String: Bool]) {
+        let flipped = photos.filter { p in was[p.id].map { $0 != p.favorite } ?? false }
+        guard !flipped.isEmpty else { return }
+        for value in [true, false] {
+            let items = flipped.filter { $0.favorite == value }
+            guard !items.isEmpty else { continue }
+            #if os(macOS)
+            FinderTag.set(value, on: items.flatMap { [$0.url] + $0.companions })
+            #endif
+            mirrorFavoriteInPhotos(items.map(\.url), value)
+            if filter == .favorites {
+                if value { reinsertInList(items.map(\.id)) } else { removeFromList(items.map(\.id)) }
+            }
+        }
+    }
+
+    /// Puts photos back into the frozen list where they belong in the tab's order, and selects them.
+    private func reinsertInList(_ ids: [String]) {
+        let order = Dictionary(visible.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { a, _ in a })
+        for id in ids where !navigation.contains(id) {
+            guard let pos = order[id] else { continue }
+            let at = navigation.firstIndex { (order[$0] ?? .max) > pos } ?? navigation.count
+            navigation.insert(id, at: at)
+        }
+        let back = ids.filter(navigation.contains)
+        guard !back.isEmpty else { return }
+        selection = Set(back)
+        if openedID != nil { openedID = back[0] }
     }
 
     // MARK: Selection
@@ -1070,28 +1391,26 @@ final class Library {
             toast = "Already saved as version \(i + 1)"
             return
         }
-        let before = journalStates([id])
+        let before = begin([id])
         p.cropVersions.append(CropVersion(rect: rect.standardized, ratio: ratio))
-        logActivity(.versionAdd, [id], before: before, summary: "Added crop version \(p.cropVersions.count) to \(Self.shortName(id))")
+        commit([id], .versionAdd, before: before, summary: "Added crop version \(p.cropVersions.count) to \(Self.shortName(id))")
         toast = "Saved version \(p.cropVersions.count)"
-        saveSoon()
     }
 
     func removeCropVersion(_ id: String, _ versionID: UUID) {
         guard let p = byID[id] else { return }
-        let before = journalStates([id])
+        let before = begin([id])
         let number = (p.cropVersions.firstIndex { $0.id == versionID } ?? 0) + 1
         p.cropVersions.removeAll { $0.id == versionID }
         if p.chosenVersionID == versionID { p.chosenVersionID = nil }
-        logActivity(.versionRemove, [id], before: before, summary: "Removed crop version \(number) from \(Self.shortName(id))")
-        saveSoon()
+        commit([id], .versionRemove, before: before, summary: "Removed crop version \(number) from \(Self.shortName(id))")
     }
 
     /// Makes a version the applied crop (recorded in history, so ⌘Z goes back).
     func chooseCropVersion(_ id: String, _ versionID: UUID) {
         guard let p = byID[id], let i = p.cropVersions.firstIndex(where: { $0.id == versionID }) else { return }
         let v = p.cropVersions[i]
-        let before = journalStates([id])
+        let before = begin([id])
         recordCrop(p, v.rect, label: "Crop version \(i + 1)" + (v.ratio.isEmpty ? "" : " · " + v.ratio))
         p.chosenVersionID = v.id
         commit([id], .versionChoose, before: before, summary: "Chose crop version \(i + 1) for \(Self.shortName(id))")
@@ -1109,7 +1428,7 @@ final class Library {
     /// Sets (or, with nil, removes) one photo's band fix as one undoable step.
     func setBandFix(_ id: String, _ settings: BandFixSettings?) {
         guard let p = byID[id], p.bandFix != settings else { return }
-        let before = journalStates([id])
+        let before = begin([id])
         p.record(p.decision, correction: p.correction,
                  label: settings == nil ? "Band fix removed" : (p.bandFix == nil ? "Bands fixed" : "Band fix adjusted"),
                  bandFix: .some(settings))
@@ -1120,7 +1439,7 @@ final class Library {
     func removeBandFix(_ ids: [String]) {
         let items = ids.compactMap { byID[$0] }.filter { $0.bandFix != nil }
         guard !items.isEmpty else { toast = "No band fix to remove"; return }
-        let before = journalStates(items.map(\.id))
+        let before = begin(items.map(\.id))
         for p in items { p.record(p.decision, correction: p.correction, label: "Band fix removed", bandFix: .some(nil)) }
         commit(items.map(\.id), .bandFix, before: before,
                summary: items.count == 1 ? nil : "Removed the band fix from \(items.count) photos")
@@ -1163,7 +1482,7 @@ final class Library {
         let order = Dictionary(uniqueKeysWithValues: photos.enumerated().map { ($1.id, $0) })
         let changing = found.compactMap { byID[$0] }.filter { $0.bandFix != settings }.sorted { (order[$0.id] ?? 0) < (order[$1.id] ?? 0) }
         if !changing.isEmpty {
-            let before = journalStates(changing.map(\.id))
+            let before = begin(changing.map(\.id))
             for p in changing {
                 p.record(p.decision, correction: p.correction, label: p.bandFix == nil ? "Bands fixed" : "Band fix adjusted",
                          bandFix: .some(settings))
@@ -1205,7 +1524,7 @@ final class Library {
         guard let p = byID[id] else { return }
         let value = light?.normalized.nonIdentity
         guard p.light != value else { return }
-        let before = journalStates([id])
+        let before = begin([id])
         p.record(p.decision, correction: p.correction, label: label ?? (value.map { "Light: " + $0.summary } ?? "Light reset"),
                  light: .some(value))
         commit([id], .light, before: before)
@@ -1215,7 +1534,7 @@ final class Library {
     func resetLight(_ ids: [String]) {
         let items = ids.compactMap { byID[$0] }.filter { $0.light != nil }
         guard !items.isEmpty else { toast = "No light adjustment to reset"; return }
-        let before = journalStates(items.map(\.id))
+        let before = begin(items.map(\.id))
         for p in items { p.record(p.decision, correction: p.correction, label: "Light reset", light: .some(nil)) }
         commit(items.map(\.id), .light, before: before, summary: items.count == 1 ? nil : "Reset the light of \(items.count) photos")
         toast = items.count == 1 ? "Light reset" : "Reset the light of \(items.count) photos"
@@ -1264,13 +1583,14 @@ final class Library {
             return p.light == value ? nil : (p, value)
         }
         if !changing.isEmpty {
-            let before = journalStates(changing.map(\.0.id))
+            let before = begin(changing.map(\.0.id))
             for (p, value) in changing {
                 p.record(p.decision, correction: p.correction, label: value.map { "Auto light: " + $0.summary } ?? "Auto light: no change",
                          light: .some(value))
             }
             commit(changing.map(\.0.id), .light, before: before,
-                   summary: changing.count == 1 ? nil : "Auto light on \(changing.count) photos")
+                   summary: changing.count == 1 ? nil : "Auto light on \(changing.count) photos",
+                   menu: "Auto Light" + Self.subject(changing.map(\.0.id)))
         }
         if ids.count == 1 {
             toast = found.isEmpty ? "Couldn't read the photo" : (changing.isEmpty ? "Auto light: already looks right" : "Auto light")
@@ -1487,24 +1807,16 @@ extension Library {
             guard e.isRevertible, let before = e.before else { toast = e.notRevertibleNote ?? "This can't be reverted"; return }
             let ids = e.files.filter { byID[$0] != nil && before[$0] != nil }
             guard !ids.isEmpty else { toast = "Not in this folder any more"; return }
-            let now = journalStates(ids)
-            var stepped: [String] = []
+            let start = begin(ids)
+            var was: [String: Bool] = [:]
             for id in ids {
                 guard let p = byID[id], let s = before[id] else { continue }
-                if apply(s, to: p, label: "Reverted") { stepped.append(id) }
+                was[id] = p.favorite
+                apply(s, to: p, label: "Reverted")
             }
-            #if os(macOS)
-            let flipped = ids.filter { now[$0]?.isFavorite != before[$0]?.isFavorite }.compactMap { byID[$0] }
-            for value in [true, false] {
-                let urls = flipped.filter { $0.favorite == value }.flatMap { [$0.url] + $0.companions }
-                if !urls.isEmpty { FinderTag.set(value, on: urls) }
-            }
-            #endif
-            let text = logActivity(.revert, ids, before: now, summary: "Reverted: " + e.summary, extra: JournalExtra(revertOf: e.id))
-            if !stepped.isEmpty {
-                undoStack.append(.edit(stepped, text ?? "Revert"))
-                redoStack.removeAll()
-            }
+            favoritesChanged(from: was)
+            let text = logActivity(.revert, ids, before: start.journal, summary: "Reverted: " + e.summary, extra: JournalExtra(revertOf: e.id))
+            pushEdit(ids, before: start, menu: Self.menuName(.revert, ids), summary: text ?? "Revert")
             saveSoon()
             toast = text == nil ? "Already as it was" : "Reverted"
         }

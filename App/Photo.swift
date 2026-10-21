@@ -192,9 +192,30 @@ final class Photo: Identifiable {
         info = nil   // the file was rewritten: new size (and pixels, if cropped)
     }
 
-    func undo() { if canUndo { index -= 1 } }
-    func redo() { if canRedo { index += 1 } }
     func jump(to i: Int) { if history.indices.contains(i) { index = i } }
+
+    /// What one ⌘Z step puts back (`Library.undo()`): the edit history and where the photo is in it, ♥ and crop versions.
+    struct EditState: Equatable {
+        var history: [Snapshot]
+        var index: Int
+        var favorite: Bool
+        var cropVersions: [CropVersion]
+        var chosenVersionID: UUID?
+    }
+
+    var editState: EditState {
+        EditState(history: history, index: index, favorite: favorite, cropVersions: cropVersions, chosenVersionID: chosenVersionID)
+    }
+
+    func restoreEdits(_ s: EditState) {
+        if !s.history.isEmpty {
+            history = s.history
+            index = min(max(s.index, 0), s.history.count - 1)
+        }
+        favorite = s.favorite
+        cropVersions = s.cropVersions
+        chosenVersionID = s.chosenVersionID
+    }
 
     // MARK: Persistence
 
@@ -219,6 +240,13 @@ final class Photo: Identifiable {
                              savedHadCrop: savedHadCrop ? true : nil, favorite: favorite ? true : nil,
                              cropVersions: cropVersions.isEmpty ? nil : cropVersions, chosenVersionID: chosenVersionID,
                              info: info, savedBandFix: savedBandFix, savedLights: savedLights.isEmpty ? nil : savedLights) }
+
+    /// Everything back exactly as `s` has it (undo / redo of Save to Original and Restore Original), unlike `restore`,
+    /// which keeps camera info it already has.
+    func restoreExactly(_ s: Saved) {
+        restore(s)
+        info = s.info
+    }
 
     func restore(_ s: Saved) {
         analyzed = s.analyzed

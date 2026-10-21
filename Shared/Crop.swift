@@ -93,6 +93,63 @@ struct EditedImage: View {
     }
 }
 
+/// Crop mode's own undo (Mac + iPhone): each change of the frame in this crop session (a drag ends, a ratio, flip,
+/// Reset, a version loaded) is a step that ⌘Z / ⇧⌘Z (the undo button) step through while crop mode is open, via
+/// `Library.toolUndo`. After Done the whole crop is one global step.
+struct CropDraftHistory: Equatable {
+    struct State: Equatable {
+        var rect: CGRect
+        var ratio: CropRatio
+        var portrait: Bool
+    }
+    private var states: [(State, String)] = []
+    private var index = 0
+
+    static func == (a: Self, b: Self) -> Bool {
+        a.index == b.index && a.states.count == b.states.count && zip(a.states, b.states).allSatisfy { $0.0 == $1.0 && $0.1 == $1.1 }
+    }
+
+    /// Crop mode opened with this frame.
+    mutating func start(_ s: State) { states = [(s, "")]; index = 0 }
+
+    /// A change, named for the Edit menu ("Crop Frame", "Ratio 4:5"…). Same frame as now = no step.
+    mutating func push(_ s: State, _ label: String) {
+        guard states.indices.contains(index), states[index].0 != s else { return }
+        states.removeSubrange((index + 1)...)
+        states.append((s, label))
+        index = states.count - 1
+    }
+
+    /// The state to show after ⌘Z (`redo` false) or ⇧⌘Z, or nil.
+    mutating func step(redo: Bool) -> State? {
+        let j = index + (redo ? 1 : -1)
+        guard states.indices.contains(j) else { return nil }
+        index = j
+        return states[j].0
+    }
+
+    var toolUndo: Library.ToolUndo {
+        Library.ToolUndo(undo: index > 0 ? states[index].1 : nil,
+                         redo: index + 1 < states.count ? states[index + 1].1 : nil, exclusive: true)
+    }
+}
+
+/// Hands a view's own undo to the Library (`toolUndo`) and runs ⌘Z / ⇧⌘Z requests that come back for it.
+struct ToolUndoBridge: ViewModifier {
+    @Environment(Library.self) private var library
+    let state: Library.ToolUndo?
+    /// Off for a second copy of the view (Mac quick look) so only one view speaks for the window.
+    var enabled = true
+    let perform: (_ redo: Bool) -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: state, initial: true) { _, s in if enabled { library.toolUndo = s } }
+            .onChange(of: library.toolUndoRequest) { _, r in if enabled { perform(r.redo) } }
+            .onDisappear { if enabled { library.toolUndo = nil } }
+    }
+}
+
 /// Crop aspect choices.
 enum CropRatio: String, CaseIterable, Identifiable {
     case original, free, square, fourFive, threeTwo, sixteenNine
@@ -159,6 +216,8 @@ struct CropOverlay: View {
     var visible: CGRect? = nil
     /// Two fingers came down (pinch to zoom): put the frame back where this drag started and ignore the rest of it.
     var paused = false
+    /// A drag ended (one step of crop mode's own undo).
+    var onEnd: (() -> Void)? = nil
 
     @State private var start: CGRect?
     @State private var ignoring = false
@@ -245,7 +304,9 @@ struct CropOverlay: View {
                         lingering = true
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { if start == nil { lingering = false } }
                         #endif
+                        let moved = start != nil && !ignoring
                         start = nil; zone = nil; ignoring = false
+                        if moved { onEnd?() }
                     }
             )
         }

@@ -110,9 +110,10 @@ Detections are **suggestions only**. Never level a photo the owner didn't decide
 | Guide line | ✓ | ✓ |
 | Loupes on the guide | ✓ | **missing** |
 | Compare overlay / side by side / split | ✓ | **missing** (hold for original only) |
-| History with jump-back (per photo) | ✓ popover (clock button), "Show all activity…" at its bottom | **missing** (undo only; the folder History below has "This photo") |
+| History with jump-back (per photo) | ✓ popover (clock button), "Show all activity…" at its bottom; a jump is one ⌘Z step | **missing** (undo only; the folder History below has "This photo") |
 | Folder activity history ("git log"): append-only `.horizonleveler-history.jsonl` in the folder (read-only card → `Application Support/HorizonLeveler/history/<sha256 of path>.jsonl`), one JSON line per action (decisions, corrections, crop + versions, ♥, delete / put back, save / restore original, Photos, export, undo / redo, revert), written off the main thread from `Library` (`Shared/Journal.swift`, extension at the end of `App/Library.swift`), read newest-first a page at a time. Revert = new undoable step back to the entry's `before` (warns if the photo changed later); delete → files back from the Trash ("Already emptied from the Trash" otherwise); save to original → restore original; Photos / export not revertible | View ▸ History (⌘Y): sheet 520×640 (`Shared/ActivityView.swift`), by day, search, "Only this photo", hover Revert / Show, right-click | ⋯ ▸ History (grid) and editor settings ▸ History ("This photo"): sheet, search, swipe-left Revert, tap = show photo |
-| Undo / redo | ⌘Z / ⇧⌘Z | undo button; iPad keyboard ⌘Z / ⇧⌘Z |
+| Undo / redo (see "Undo coverage" below) | ⌘Z / ⇧⌘Z; Edit ▸ Undo / Redo name the step ("Undo Level DSCF0015", "Redo Crop B"), disabled when empty; ⋯ menu + context menu too; History search field keeps its own ⌘Z | undo button (accessibility label = the same title), ⋯ ▸ Undo / Redo with titles; iPad keyboard ⌘Z / ⇧⌘Z with titles (History search keeps its own) |
+| In-mode undo | crop mode: ⌘Z / ⇧⌘Z step this session's frame changes (drag end, ratio, flip, Reset, version loaded; `CropDraftHistory`), nothing global while crop is open; Done = one global step. Level tool: ⌘Z takes back the last placed point first | same via the undo button / iPad ⌘Z (`ToolUndoBridge` → `Library.toolUndo`) |
 | Multi-selection (decide / ♥ / copy / delete act on all selected) | list + grid: ⌘-click toggle, ⇧-click range, ⌘A; the opened photo stays the single "current" one | grid "Select" mode: tap to check, bottom bar Favorite / Level / Delete / Done |
 | Move to Trash (file + RAW twin, `trashItem`; backups untouched; never a permanent delete) and undo (files moved back, photo reinserted with its edits, reselected; taken path or missing file → skipped + toast) | Delete / ⌘⌫ in list, grid, preview; right-click; NSAlert with "Don't ask again"; ⌘Z | long-press "Delete", editor trash button, Select bar; dialog with "Don't ask again"; toast "Moved 3 to the Trash · Undo" (5 s) + editor undo; no Trash on the provider → hidden `.horizonleveler-trash/` |
 | "Ask before deleting" (`confirmDelete`) | settings panel | settings sheet |
@@ -125,6 +126,27 @@ Detections are **suggestions only**. Never level a photo the owner didn't decide
 | Copy as shown (leveled render) / original / RAW file | ⌘C / ⌥⌘C / ⇧⌘C, right-click | long-press, editor panel |
 | Export leveled copies | JPEG / HEIC / TIFF, choose folder | JPEG into `leveled/` |
 | Film scan fixes (hidden, owner's Leica M6 shutter bands): gate `labFixes` (@AppStorage, off) hides every menu / button / panel; engine `Core/BandFixer.swift`, screen cache `Shared/BandFixStore.swift` (one analysis per photo from the full file, gain applied to previews / thumbnails, fixed images cached per photo + size + settings). `Snapshot.bandFix` (in history, undo, journal action `bandFix`, `JournalState.band`), `hasEdits`, Edited tab; applied before leveling / crop in `EditedImage(fix:)`, export, copy, Save to Original (`Photo.savedBandFix` re-applied from the backup). `Library.applyBandFix` (batch, toast "Fixed bands on 12 of 20 (8 clean)", clean photos get nothing) / `removeBandFix` / `setBandFix` / `openFixes` | Settings ▸ Advanced. Right-click ▸ Fixes ▸ Remove Shutter Bands (auto) / Remove Fix / Open Fixes Panel; ⋯ ▸ Fixes…, "»" menu, optional control "Fixes" (not a default). Fixes mode in the preview (`App/FixesPanel.swift`, `library.fixesTool`): photo as shot, 300 pt panel with per-side status, strengths, flatten, zones, tilt, force, Before / After / Split (drag handle), zone lines, drag rows + Auto Rows, profile chart, Apply to N selected, Reset / Remove / Apply, Done / Esc. Changes live (50 ms debounce), stored on release | n/a by the owner's choice (Mac-only tool). The iPhone only *shows* fixes made on the Mac (`p.bandFixSource` in the editor and thumbnails); no toggle, menus or sheet |
+
+## Undo coverage
+
+`Library.undo()` / `redo()` serve every platform (Mac menu, iPhone button, iPad keyboard). One user action = one
+step (a batch is one step), each logged as "Undo: …" / "Redo: …" in the History journal.
+
+- **Edit steps** (`UndoStep.edit`): each photo's `Photo.EditState` (history + index, ♥, crop versions, chosen version)
+  before and after, so undo / redo restore exactly (no ±1 index walking; no-op actions push nothing). Covers decide
+  (L / K / U, batches, apply all suggestions, quick level + the chip's Undo, which *is* that step's undo), ruler,
+  two-point, [ ] nudges, suggested angle, reset decision, clear automatic decisions, crop, crop versions (add / remove
+  / choose incl. `chosenVersionID`), history jump (popover), band fix (set / auto / remove), light (set / auto /
+  reset), ♥ (Finder Red tag + Apple Photos mirror + Favorites list redone on undo / redo; `favoritesChanged`),
+  journal Revert.
+- **File steps** (`UndoStep.file`): Save to Original and Restore Original. Each side records the photo's whole
+  `Photo.Saved` and whether a backup exists; a rendered file waits in `<folder>/.horizonleveler-originals/.undo/`
+  while the other side is shown (`Library.replace` keeps the old file atomically). The untouched original only ever
+  moves between the file and the backup. Earlier edit steps stay valid (the photo's history comes back with it).
+  Slots are deleted when their step leaves the redo stack, and on folder open / close.
+- **Trash**: delete → put back → move again (as before).
+- **Not undoable, on purpose**: Add to Photos / Sync favorites to Photos and Export (they write outside the folder),
+  Copy, analysis results, Finder tags imported at open, settings.
 
 ## Simulator
 

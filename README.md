@@ -98,7 +98,7 @@ straighten crooked horizons in a keystroke, and crop. Native Swift, on-device, n
       <h3>See the result, not the machinery</h3>
       The preview shows only the final photo: rotated and cropped edge to edge, the way it will be saved. Press <kbd>Space</kbd> (Mac) or tap the eye (iPhone) to flip to the original and back.
       <br><br>
-      Monochrome, light or dark with your system, no title bar, no badges. The start page is ink on paper: a hand-drawn camera on a level horizon, a bold <i>photo minimalist.</i> and one black pill to open a folder (off-white by day, pure black at night). Everything else lives in one settings panel that slides in and out.
+      Monochrome, light or dark with your system, no title bar, no badges. The start page is ink on paper: one ink disc resting on a level horizon, a bold <i>photo minimalist.</i> and one black pill to open a folder (off-white by day, pure black at night). Everything else lives in one settings panel that slides in and out.
     </td>
     <td width="50%" valign="top">
       <img src="docs/before-after.png" alt="Before and after: a sunset landscape tilted 3.6 degrees, and the app's leveled, cropped export" width="100%">

@@ -257,8 +257,8 @@ private struct StartPage: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            StartArt(ink: Theme.ink).frame(width: 240, height: 164)
-                .padding(.bottom, 26)
+            StartArt(ink: Theme.ink).frame(width: 128, height: 60)
+                .padding(.bottom, 32)
             InkHeadline(text: "photo minimalist.", size: 46).foregroundStyle(Theme.ink)
             Text("Preview, level, crop. Nothing else.")
                 .font(.title3).foregroundStyle(.secondary)

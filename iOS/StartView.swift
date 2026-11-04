@@ -9,8 +9,8 @@ struct StartView: View {
     var body: some View {
         VStack(spacing: 0) {
             Spacer(minLength: 24)
-            StartArt().frame(width: 230, height: 157)
-                .padding(.bottom, 22)
+            StartArt().frame(width: 120, height: 56)
+                .padding(.bottom, 28)
             InkHeadline(text: "photo minimalist.", size: 38)
             Text("Preview, level, crop. Nothing else.")
                 .font(.body).foregroundStyle(.secondary)

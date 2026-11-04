@@ -43,7 +43,7 @@ private struct GeneralPreferences: View {
                     }
                 }
             } footer: {
-                Text("A card opens on the folder you used on it last time and the app comes to the front. When the app is closed, a tiny helper (listed in Login Items as Photo Minimalist) opens it for the card.")
+                Text("A card opens on the folder you used on it last time and the app comes to the front; taking the card out hides the app again. When the app is closed, a tiny helper (listed in Login Items as Photo Minimalist) opens it for the card.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section {

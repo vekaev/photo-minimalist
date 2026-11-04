@@ -9,7 +9,7 @@ STATE="$STATE_DIR/cards-present"
 mkdir -p "$STATE_DIR"
 touch "$STATE"
 
-cards() { for v in /Volumes/*; do [ -d "$v/DCIM" ] && echo "$v"; done; }
+cards() { for v in /Volumes/*; do [ -d "$v/DCIM" ] && echo "$v"; done; return 0; }
 
 # A mounting card's folder can appear a moment before its files do: look a few times (fast path first).
 now=$(cards)

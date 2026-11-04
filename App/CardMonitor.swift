@@ -188,13 +188,26 @@ final class CardMonitor {
 
     private func cardRemoved(_ volume: URL) {
         CardWatcher.cardRemoved(volume)
+        let base = volume.standardizedFileURL.path
+        func onCard(_ url: URL?) -> Bool {
+            guard let path = url?.standardizedFileURL.path else { return false }
+            return path == base || path.hasPrefix(base + "/")   // not "/Volumes/Untitled 1" for "/Volumes/Untitled"
+        }
+        // The card was what you were looking at: the front window's tab showing it, on screen.
+        let front = WindowRouter.shared.frontTabs
+        let wasShowing = onCard(front?.current.folder) && front?.window?.isVisible == true && !NSApp.isHidden
         for library in WindowRouter.shared.libraries {
             if library.cardNote != nil { library.cardNote = nil }
-            if library.cardOffer?.folder.path.hasPrefix(volume.path) == true { library.cardOffer = nil }
-            if let folder = library.folder, folder.standardizedFileURL.path.hasPrefix(volume.standardizedFileURL.path) {
+            if onCard(library.cardOffer?.folder) { library.cardOffer = nil }
+            if onCard(library.folder) {
                 // Its tab closes (the last tab stays, showing the start page with this note).
                 WindowRouter.shared.close(library, notice: "The card “\(volume.lastPathComponent)” was ejected. Your decisions are saved on it.")
             }
+        }
+        // It came with the card, it goes with the card: with "Open and show it", taking out the card you were
+        // looking at hides the app (decisions are already saved; the Dock icon or ⌘Tab brings it back).
+        if wasShowing && CardAction.current == .open {
+            NSApp.hide(nil)
         }
     }
 }

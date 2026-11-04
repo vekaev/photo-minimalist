@@ -60,8 +60,8 @@ final class Library {
     var notice: String?
     #if os(macOS)
     /// What to do when a memory card is inserted.
-    var cardAction = CardAction(rawValue: UserDefaults.standard.string(forKey: "cardAction") ?? "") ?? .ask {
-        didSet { UserDefaults.standard.set(cardAction.rawValue, forKey: "cardAction") }
+    var cardAction = CardAction.current {
+        didSet { UserDefaults.standard.set(cardAction.rawValue, forKey: CardAction.key) }
     }
     /// A card waiting in the small "Open?" banner.
     var cardOffer: CardOffer?
@@ -296,6 +296,9 @@ final class Library {
         scopedFolder = url.startAccessingSecurityScopedResource() ? url : nil
         folder = url
         UserDefaults.standard.set(url.path, forKey: "lastFolder")
+        #if os(macOS)
+        CardMonitor.remember(url)   // on a memory card: this folder opens again next time the card goes in
+        #endif
         // Keep the bookmark in step with the path; drop it if it can't be made, so it never points elsewhere.
         if let bookmark = try? url.bookmarkData() {
             UserDefaults.standard.set(bookmark, forKey: "lastFolderBookmark")

@@ -166,7 +166,7 @@ private struct CardBanner: View {
                 .buttonStyle(.plain)
                 Button { library.cardOffer = nil } label: { Image(systemName: "xmark").frame(width: 22, height: 22) }
                     .buttonStyle(.plain).foregroundStyle(.secondary)
-                    .help("Dismiss. Change this in Settings → Memory card.")
+                    .help("Dismiss. Settings ▸ General ▸ “When a memory card is inserted” can open cards right away.")
             }
             .padding(.horizontal, 16).padding(.vertical, 10)
             .background(.regularMaterial, in: Capsule())

@@ -17,7 +17,7 @@ struct PreferencesView: View {
 
 private struct GeneralPreferences: View {
     @AppStorage("reopenLastFolder") private var reopenLastFolder = true
-    @AppStorage("cardAction") private var cardAction: CardAction = .ask
+    @AppStorage(CardAction.key) private var cardAction: CardAction = .open
     @AppStorage("pairRaw") private var pairRaw = true
     @AppStorage(Library.confirmDeleteKey) private var confirmDelete = true
     @AppStorage(Library.photosFavoriteSyncKey) private var mirrorFavorites = true

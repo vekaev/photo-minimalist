@@ -89,6 +89,7 @@ final class FolderTabs {
 /// The root of one window: the tab bar above the selected tab's content.
 struct FolderWindow: View {
     @State private var tabs = FolderTabs()
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         let library = tabs.current
@@ -108,7 +109,10 @@ struct FolderWindow: View {
         // F and ⌘⌫ work wherever keyboard focus is in this window (sidebar grid, preview, a clicked control),
         // not only when a particular view happens to hold focus.
         .background(CanvasEvents { e, _ in Self.photoKey(e, library) })
-        .onAppear { WindowRouter.shared.appeared(tabs) }
+        .onAppear {
+            WindowRouter.shared.openWindow = openWindow
+            WindowRouter.shared.appeared(tabs)
+        }
         .onChange(of: library.folder) { WindowRouter.shared.persist() }
         .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
             for l in tabs.tabs { syncGlobalSettings(l) }
@@ -144,7 +148,7 @@ struct FolderWindow: View {
         if advance != library.advanceAfterDecision { library.advanceAfterDecision = advance }
         let reopen = d.object(forKey: "reopenLastFolder") as? Bool ?? true
         if reopen != library.reopenLastFolder { library.reopenLastFolder = reopen }
-        if let c = CardAction(rawValue: d.string(forKey: "cardAction") ?? ""), c != library.cardAction { library.cardAction = c }
+        if CardAction.current != library.cardAction { library.cardAction = CardAction.current }
         let pair = d.object(forKey: "pairRaw") as? Bool ?? true
         if pair != library.pairRaw { library.pairRaw = pair }
     }
@@ -382,6 +386,10 @@ final class WindowRouter {
     private var isTerminating = false
     private let cards = CardMonitor()
     private var keyMonitor: Any?
+    /// Opens a new window when none is left (kept from the last window that appeared).
+    var openWindow: OpenWindowAction?
+    /// A card folder waiting for that new window.
+    private var pendingCard: URL?
 
     private init() {
         // Our own tab bar replaces macOS window tabs.
@@ -411,7 +419,39 @@ final class WindowRouter {
             cards.start(frontmost: { [weak self] in self?.frontLibrary })
             installKeyMonitor()
         }
+        if let card = pendingCard {
+            pendingCard = nil
+            open(card, from: tabs.current)
+            // The window is attached a moment after it appears.
+            DispatchQueue.main.async { [weak tabs] in Self.bringForward(tabs?.window) }
+        }
         persist()
+    }
+
+    /// A memory card went in (Settings: "Open and show it"): its folder opens in this window's tab if it's
+    /// empty, else in a new tab, and the window comes forward, also from another app, when minimized or
+    /// when every window was closed. `show: false` (a card that was already in at launch) only opens it.
+    func openCard(_ folder: URL, show: Bool) {
+        guard let library = frontLibrary else {
+            pendingCard = folder
+            openWindow?(id: "folder")
+            if show { NSApp.unhide(nil); NSApp.activate() }
+            return
+        }
+        open(folder, from: library)
+        guard show else { return }
+        NSApp.unhide(nil)
+        Self.bringForward(tabs(of: library)?.window)
+    }
+
+    /// On screen and in front: un-minimized, ordered front even if macOS doesn't let us take focus
+    /// from the app in use (then it still sits on top until that app is clicked).
+    private static func bringForward(_ window: NSWindow?) {
+        guard let window else { NSApp.activate(); return }
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        window.orderFrontRegardless()
+        NSApp.activate()
+        window.makeKeyAndOrderFront(nil)
     }
 
     func attach(_ window: NSWindow, to tabs: FolderTabs) {

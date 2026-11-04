@@ -203,7 +203,7 @@ scripts/build-app.sh --install        # Mac: universal app + DMG, installs to ~/
   It downloads the latest release, puts the app in Applications and opens it (macOS only asks about apps a browser downloaded).
 - **The DMG** ([download](https://github.com/vekaev/photo-minimalist/releases/latest/download/PhotoMinimalist-mac.dmg)): it opens on a window that says *Drag Photo Minimalist to Applications*. The app isn't notarized yet, so the first launch needs System Settings ▸ Privacy & Security ▸ *Open Anyway* (once; the window says so too).
 
-After that it updates itself: once a day it checks this repo's latest release, or right away via *Photo Minimalist ▸ Check for Updates…* (Settings ▸ General can turn the daily check off).
+After that it updates itself, and keeps the permissions you gave it (Photos, memory cards) from version to version: once a day it checks this repo's latest release, or right away via *Photo Minimalist ▸ Check for Updates…* (Settings ▸ General can turn the daily check off).
 
 **Releasing an update** (Mac, [Sparkle](https://sparkle-project.org)): `scripts/release.sh 0.3.0` bumps the version, builds the DMG (its window: `Support/DMG`, drawn by `scripts/make-dmg-background.swift`, laid out by dmgbuild) and signs it, writes `appcast.xml`, commits, tags, pushes and creates the GitHub release; installed copies pick it up from there. The signing key lives in your login keychain (back it up, see the script's header).
 

@@ -5,8 +5,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 xcodegen generate --quiet
+# The same signature as releases (scripts/signing.sh), so this copy keeps its permissions too.
+source scripts/signing.sh
+# shellcheck disable=SC2086
 xcodebuild -project HorizonLeveler.xcodeproj -scheme HorizonLeveler -configuration Release \
-  -destination "generic/platform=macOS" -derivedDataPath build -quiet build
+  -destination "generic/platform=macOS" -derivedDataPath build $(sign_settings) -quiet build
 
 APP="$HOME/Applications/Photo Minimalist.app"
 # Matches the app under its current and its old name (Horizon Leveler).

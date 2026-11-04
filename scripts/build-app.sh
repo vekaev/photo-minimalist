@@ -9,8 +9,13 @@ cd "$(dirname "$0")/.."
 command -v xcodegen >/dev/null || { echo "Install XcodeGen first: brew install xcodegen"; exit 1; }
 xcodegen generate --quiet
 
+# Signed with a real certificate when there is one, so updates keep the app's permissions (scripts/signing.sh).
+source scripts/signing.sh
+SIGNING=$(sign_settings)
+echo "Signing: ${SIGNING%% *}"
+# shellcheck disable=SC2086
 xcodebuild -project HorizonLeveler.xcodeproj -scheme HorizonLeveler -configuration Release \
-  -destination "generic/platform=macOS" -derivedDataPath build ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO ${BUILD_SETTINGS:-} -quiet build
+  -destination "generic/platform=macOS" -derivedDataPath build ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO $SIGNING ${BUILD_SETTINGS:-} -quiet build
 xcodebuild -project HorizonLeveler.xcodeproj -scheme leveler-cli -configuration Release \
   -destination "generic/platform=macOS" -derivedDataPath build ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO -quiet build
 

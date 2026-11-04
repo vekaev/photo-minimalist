@@ -15,12 +15,12 @@ xcodebuild -project HorizonLeveler.xcodeproj -scheme leveler-cli -configuration 
   -destination "generic/platform=macOS" -derivedDataPath build ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO -quiet build
 
 APP="build/Build/Products/Release/Photo Minimalist.app"
-rm -rf dist && mkdir -p dist/dmg
-cp -R "$APP" "dist/dmg/Photo Minimalist.app"
-ln -s /Applications dist/dmg/Applications
-hdiutil create -quiet -volname "Photo Minimalist" -srcfolder dist/dmg -ov -format UDZO dist/PhotoMinimalist-mac.dmg
+rm -rf dist && mkdir -p dist
+# The DMG opens on a window: app → Applications with an arrow, and the first-launch hint (Support/DMG).
+# dmgbuild writes Finder's window layout without scripting Finder; it lives in a venv under build/.
+[[ -x build/dmgvenv/bin/dmgbuild ]] || { python3 -m venv build/dmgvenv && build/dmgvenv/bin/pip install -q dmgbuild; }
+build/dmgvenv/bin/dmgbuild -s Support/DMG/dmg-settings.py -D app="$APP" "Photo Minimalist" dist/PhotoMinimalist-mac.dmg >/dev/null
 cp build/Build/Products/Release/leveler-cli dist/leveler-cli
-rm -rf dist/dmg
 echo "Built dist/PhotoMinimalist-mac.dmg and dist/leveler-cli"
 
 if [[ "${1:-}" == "--install" ]]; then

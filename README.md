@@ -194,9 +194,18 @@ git clone https://github.com/vekaev/photo-minimalist && cd photo-minimalist
 scripts/build-app.sh --install        # Mac: universal app + DMG, installs to ~/Applications and opens it
 ```
 
-**Installing from the DMG** (e.g. for a friend): open it, drag Photo Minimalist to Applications. The app isn't notarized yet, so the first launch is blocked: System Settings ▸ Privacy & Security ▸ *Open Anyway*. After that it updates itself: once a day it checks this repo's latest release, or right away via *Photo Minimalist ▸ Check for Updates…* (Settings ▸ General can turn the daily check off).
+**Install** (e.g. for a friend), either way:
 
-**Releasing an update** (Mac, [Sparkle](https://sparkle-project.org)): `scripts/release.sh 0.3.0` bumps the version, builds and signs the DMG, writes `appcast.xml`, commits, tags, pushes and creates the GitHub release; installed copies pick it up from there. The signing key lives in your login keychain (back it up, see the script's header).
+- **One line in Terminal, no security prompt:**
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/vekaev/photo-minimalist/main/scripts/install.sh | sh
+  ```
+  It downloads the latest release, puts the app in Applications and opens it (macOS only asks about apps a browser downloaded).
+- **The DMG** ([download](https://github.com/vekaev/photo-minimalist/releases/latest/download/PhotoMinimalist-mac.dmg)): it opens on a window that says *Drag Photo Minimalist to Applications*. The app isn't notarized yet, so the first launch needs System Settings ▸ Privacy & Security ▸ *Open Anyway* (once; the window says so too).
+
+After that it updates itself: once a day it checks this repo's latest release, or right away via *Photo Minimalist ▸ Check for Updates…* (Settings ▸ General can turn the daily check off).
+
+**Releasing an update** (Mac, [Sparkle](https://sparkle-project.org)): `scripts/release.sh 0.3.0` bumps the version, builds the DMG (its window: `Support/DMG`, drawn by `scripts/make-dmg-background.swift`, laid out by dmgbuild) and signs it, writes `appcast.xml`, commits, tags, pushes and creates the GitHub release; installed copies pick it up from there. The signing key lives in your login keychain (back it up, see the script's header).
 
 iPhone: `xcodegen generate`, open `HorizonLeveler.xcodeproj`, pick the **HorizonLeveler-iOS** scheme, choose your team under Signing, and run it on your phone (or `scripts/run-ios-sim.sh` for the simulator).
 

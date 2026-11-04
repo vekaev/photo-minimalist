@@ -13,6 +13,8 @@ struct HorizonLevelerApp: App {
 
     init() {
         PhotoControl.migrateStoredLists()
+        _ = Updater.shared   // starts Sparkle's daily check
+        DispatchQueue.main.async { CardWatcher.sync() }   // the memory card watcher for when the app is closed
         DispatchQueue.main.async { AppAppearance.current.apply() }
     }
 
@@ -46,6 +48,7 @@ struct HorizonLevelerApp: App {
         .defaultSize(width: 1440, height: 900)
         .windowStyle(.hiddenTitleBar)
         .commands {
+            CommandGroup(after: .appInfo) { CheckForUpdatesButton() }
             CommandGroup(replacing: .newItem) {
                 Button("New Tab") { WindowRouter.shared.newTab(from: focusedLibrary) }.keyboardShortcut("t")
                 Button("Open Folder…") { WindowRouter.shared.chooseFolders(from: focusedLibrary) }.keyboardShortcut("o")

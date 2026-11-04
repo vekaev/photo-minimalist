@@ -1,3 +1,4 @@
+import ServiceManagement
 import SwiftUI
 
 /// The app's Settings window (⌘,), the standard Mac place for app-wide preferences, with General and Review tabs.
@@ -18,6 +19,8 @@ struct PreferencesView: View {
 private struct GeneralPreferences: View {
     @AppStorage("reopenLastFolder") private var reopenLastFolder = true
     @AppStorage(CardAction.key) private var cardAction: CardAction = .open
+    @AppStorage(CardWatcher.key) private var cardWatcher = true
+    @State private var watcherStatus = CardWatcher.status
     @AppStorage("pairRaw") private var pairRaw = true
     @AppStorage(Library.confirmDeleteKey) private var confirmDelete = true
     @AppStorage(Library.photosFavoriteSyncKey) private var mirrorFavorites = true
@@ -30,6 +33,18 @@ private struct GeneralPreferences: View {
                 Picker("When a memory card is inserted", selection: $cardAction) {
                     ForEach(CardAction.allCases) { Text($0.label).tag($0) }
                 }
+                .onChange(of: cardAction) { CardWatcher.sync() }
+                Toggle("Also when Photo Minimalist is closed", isOn: $cardWatcher)
+                    .disabled(cardAction != .open)
+                    .onChange(of: cardWatcher) { CardWatcher.sync(); watcherStatus = CardWatcher.status }
+                if cardAction == .open && cardWatcher && watcherStatus == .requiresApproval {
+                    LabeledContent("macOS needs your OK for this") {
+                        Button("Open Login Items…") { SMAppService.openSystemSettingsLoginItems() }
+                    }
+                }
+            } footer: {
+                Text("A card opens on the folder you used on it last time and the app comes to the front. When the app is closed, a tiny helper (listed in Login Items as Photo Minimalist) opens it for the card.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section {
                 Toggle("Show RAW + JPEG pairs as one photo", isOn: $pairRaw)
@@ -39,6 +54,7 @@ private struct GeneralPreferences: View {
                 Text("A pair like DSCF0015.JPG + .RAF shows the JPEG with a RAF mark; decisions and deletes apply to both. ⌘Z puts deleted photos back. Mirror favorites: ♥ here also hearts (or un-hearts) the same photo in Apple Photos when it's already imported there.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            UpdatePreferences()
             // Low importance, so last.
             Section {
                 Picker("Appearance", selection: $appearance) {

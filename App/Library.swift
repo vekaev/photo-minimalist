@@ -65,6 +65,8 @@ final class Library {
     }
     /// A card waiting in the small "Open?" banner.
     var cardOffer: CardOffer?
+    /// Top right: "Reading memory card…" / "Opened “Untitled” automatically".
+    var cardNote: CardNote?
     #endif
     /// Show DSCF0015.JPG + DSCF0015.RAF as one photo (the JPEG). Changing it reopens the folder.
     var pairRaw = UserDefaults.standard.object(forKey: "pairRaw") as? Bool ?? true {

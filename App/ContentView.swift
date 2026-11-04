@@ -67,6 +67,7 @@ struct ContentView: View {
         // Re-sort once the background check finishes, so new suggestions move to the top.
         .onChange(of: library.isAnalyzing) { _, busy in if !busy && library.filter == .review { refreshList(keepSelection: true) } }
         .overlay(alignment: .bottom) { CardBanner() }
+        .overlay(alignment: .topTrailing) { CardNoteView() }
         .overlay(alignment: .bottom) { Toast() }
     }
 
@@ -142,6 +143,72 @@ private struct Toast: View {
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: library.toast)
         .allowsHitTesting(false)
+    }
+}
+
+// MARK: Memory card note (top right)
+
+/// "Reading memory card “Untitled”…" while macOS mounts it, then "Opened “Untitled” automatically · Ask First · Keep"
+/// so turning automatic opening off is one click away. Answered once, the second one doesn't come back.
+private struct CardNoteView: View {
+    @Environment(Library.self) private var library
+
+    var body: some View {
+        ZStack {
+            switch library.cardNote {
+            case .reading(let name):
+                HStack(spacing: 9) {
+                    ProgressView().controlSize(.small)
+                    Text(name.isEmpty ? "Reading memory card…" : "Reading memory card “\(name)”…").font(.callout)
+                }
+                .modifier(NoteCard())
+                .task {
+                    // A cancelled sleep (the view was rebuilt) must not hide it: only a sleep that finished.
+                    guard (try? await Task.sleep(for: .seconds(90))) != nil else { return }   // macOS gave up on it
+                    if case .reading = library.cardNote { library.cardNote = nil }
+                }
+            case .opened(let name):
+                HStack(spacing: 10) {
+                    Image(systemName: "sdcard").foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Opened “\(name)” automatically").font(.callout.weight(.medium))
+                        Text("Rather be asked when a card goes in?").font(.caption).foregroundStyle(.secondary)
+                    }
+                    Button("Ask First") {
+                        UserDefaults.standard.set(CardAction.ask.rawValue, forKey: CardAction.key)
+                        answer()
+                        library.toast = "Cards will ask first. Settings ▸ General changes it back."
+                    }
+                    Button("Keep") { answer() }
+                }
+                .controlSize(.small)
+                .modifier(NoteCard())
+                .task(id: name) {
+                    guard (try? await Task.sleep(for: .seconds(12))) != nil else { return }
+                    if library.cardNote == .opened(name) { withAnimation { library.cardNote = nil } }
+                }
+            case nil:
+                EmptyView()
+            }
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: library.cardNote)
+    }
+
+    private func answer() {
+        UserDefaults.standard.set(true, forKey: CardNote.answeredKey)
+        withAnimation { library.cardNote = nil }
+    }
+}
+
+private struct NoteCard: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, 14).padding(.vertical, 9)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Theme.line))
+            .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
+            .padding(.top, 40).padding(.trailing, 14)   // below the filter row and the list | grid switch
+            .transition(.move(edge: .top).combined(with: .opacity))
     }
 }
 

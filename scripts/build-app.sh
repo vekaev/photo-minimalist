@@ -2,6 +2,7 @@
 # Builds Photo Minimalist (universal: Apple Silicon + Intel) and packages dist/PhotoMinimalist-mac.dmg.
 #   scripts/build-app.sh            build the app and the .dmg
 #   scripts/build-app.sh --install  also copy the app to ~/Applications and launch it
+# Extra build settings (e.g. a version for scripts/release.sh) come in BUILD_SETTINGS="KEY=value KEY=value".
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -9,7 +10,7 @@ command -v xcodegen >/dev/null || { echo "Install XcodeGen first: brew install x
 xcodegen generate --quiet
 
 xcodebuild -project HorizonLeveler.xcodeproj -scheme HorizonLeveler -configuration Release \
-  -destination "generic/platform=macOS" -derivedDataPath build ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO -quiet build
+  -destination "generic/platform=macOS" -derivedDataPath build ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO ${BUILD_SETTINGS:-} -quiet build
 xcodebuild -project HorizonLeveler.xcodeproj -scheme leveler-cli -configuration Release \
   -destination "generic/platform=macOS" -derivedDataPath build ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO -quiet build
 

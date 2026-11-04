@@ -4,6 +4,11 @@ options:
   deploymentTarget:
     macOS: "14.0"
     iOS: "17.0"
+packages:
+  # Updates for the Mac app (DMG + appcast on GitHub Releases, see scripts/release.sh).
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: "2.10.0"
 settings:
   base:
     SWIFT_VERSION: "5.0"
@@ -16,6 +21,27 @@ targets:
       - App
       - Core
       - Shared
+      # The memory card watcher (App/CardWatcher.swift): its script and its LaunchAgent, registered via SMAppService.
+      - path: Support/CardWatcher/card-watcher.sh
+        buildPhase: resources
+      - path: Support/CardWatcher/app.horizonleveler.cardwatcher.plist
+        buildPhase:
+          copyFiles:
+            destination: wrapper
+            subpath: Contents/Library/LaunchAgents
+    dependencies:
+      - package: Sparkle
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # Sparkle: the newest release's appcast (SPARKLE_FEED_URL below).
+        SUFeedURL: $(SPARKLE_FEED_URL)
+        SUPublicEDKey: tEcLQ1GUpjT6MlThQlXEcW0eBC0ruMVBrpYUfRYE3Uc=
+        # Check once a day without asking first; Settings ▸ General can turn it off.
+        SUEnableAutomaticChecks: true
+        SUScheduledCheckInterval: 86400
     settings:
       base:
         # The app ID stays the same so settings, the last folder and permissions carry over from Horizon Leveler.
@@ -29,6 +55,8 @@ targets:
         INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: "Adds your photos to Apple Photos, only when you ask."
         MARKETING_VERSION: "0.2.0"
         CURRENT_PROJECT_VERSION: "1"
+        # GitHub always serves the latest release's asset at this URL. scripts/release.sh --local overrides it.
+        SPARKLE_FEED_URL: https://github.com/vekaev/photo-minimalist/releases/latest/download/appcast.xml
         ENABLE_APP_SANDBOX: NO
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_STYLE: Manual

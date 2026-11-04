@@ -389,7 +389,9 @@ final class WindowRouter {
     /// Opens a new window when none is left (kept from the last window that appeared).
     var openWindow: OpenWindowAction?
     /// A card folder waiting for that new window.
-    private var pendingCard: URL?
+    private var pendingCard: (URL, String)?
+    /// A card being read while no window was open (its name).
+    private var pendingReading: String?
 
     private init() {
         // Our own tab bar replaces macOS window tabs.
@@ -419,27 +421,59 @@ final class WindowRouter {
             cards.start(frontmost: { [weak self] in self?.frontLibrary })
             installKeyMonitor()
         }
-        if let card = pendingCard {
+        if let (card, name) = pendingCard {
             pendingCard = nil
+            pendingReading = nil
             open(card, from: tabs.current)
+            if !UserDefaults.standard.bool(forKey: CardNote.answeredKey) { library(showing: card)?.cardNote = .opened(name) }
             // The window is attached a moment after it appears.
+            DispatchQueue.main.async { [weak tabs] in Self.bringForward(tabs?.window) }
+        } else if let name = pendingReading {
+            pendingReading = nil
+            tabs.current.cardNote = .reading(name)
             DispatchQueue.main.async { [weak tabs] in Self.bringForward(tabs?.window) }
         }
         persist()
     }
 
+    /// A memory card was detected but isn't mounted yet: come forward now with "Reading memory card…".
+    func cardDetected(name: String?) {
+        NSApp.unhide(nil)
+        guard let library = frontLibrary else {
+            pendingReading = name ?? ""
+            openWindow?(id: "folder")
+            NSApp.activate()
+            return
+        }
+        library.cardNote = .reading(name ?? "")
+        Self.bringForward(tabs(of: library)?.window)
+    }
+
+    /// The card had no photos (or none could be read): drop "Reading…".
+    func cardNotFound() {
+        for l in libraries { if case .reading = l.cardNote { l.cardNote = nil } }
+    }
+
     /// A memory card went in (Settings: "Open and show it"): its folder opens in this window's tab if it's
     /// empty, else in a new tab, and the window comes forward, also from another app, when minimized or
     /// when every window was closed. `show: false` (a card that was already in at launch) only opens it.
-    func openCard(_ folder: URL, show: Bool) {
+    func openCard(_ folder: URL, volumeName: String, show: Bool) {
+        cardNotFound()
         guard let library = frontLibrary else {
-            pendingCard = folder
-            openWindow?(id: "folder")
+            pendingCard = (folder, volumeName)
             if show { NSApp.unhide(nil); NSApp.activate() }
+            // The card watcher's `open` may already be bringing a window back (reopen); only make one if not.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+                guard let self, self.pendingCard != nil, self.frontLibrary == nil else { return }
+                self.openWindow?(id: "folder")
+            }
             return
         }
         open(folder, from: library)
         guard show else { return }
+        // Top right: "Opened “Untitled” automatically · Ask First · Keep", until it's answered once.
+        let shown = self.library(showing: folder)
+        if !UserDefaults.standard.bool(forKey: CardNote.answeredKey) { shown?.cardNote = .opened(volumeName) }
         NSApp.unhide(nil)
         Self.bringForward(tabs(of: library)?.window)
     }

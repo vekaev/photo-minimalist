@@ -257,17 +257,17 @@ private struct StartPage: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            StartArt(ink: Theme.ink).frame(width: 128, height: 60)
-                .padding(.bottom, 32)
-            InkHeadline(text: "photo minimalist.", size: 46).foregroundStyle(Theme.ink)
+            StartArt(ink: Theme.ink).frame(width: 72, height: 34)
+                .padding(.bottom, 18)
+            InkHeadline(text: "photo minimalist.", size: 28).foregroundStyle(Theme.ink)
             Text("Preview, level, crop. Nothing else.")
-                .font(.title3).foregroundStyle(.secondary)
-                .padding(.top, 8)
+                .foregroundStyle(.secondary)
+                .padding(.top, 4)
             Button { library.chooseFolder() } label: {
                 Text("Open folder")
-                    .font(.system(size: 15, weight: .semibold))
-                    .frame(minWidth: 190, minHeight: 48)
-                    .padding(.horizontal, 8)
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(minHeight: 30)
+                    .padding(.horizontal, 18)
                     .foregroundStyle(Theme.paper)
                     .background(Theme.ink, in: Capsule())
                     .contentShape(Capsule())
@@ -275,9 +275,9 @@ private struct StartPage: View {
             .buttonStyle(InkPress())
             .keyboardShortcut("o")
             .help("Open a folder of photos (⌘O)")
-            .padding(.top, 34)
+            .padding(.top, 22)
             Text("or drop a folder here").font(.callout).foregroundStyle(.tertiary)
-                .padding(.top, 14)
+                .padding(.top, 10)
             if let notice = library.notice {
                 // "“Untitled” was ejected": a quiet card with one black glyph.
                 HStack(spacing: 12) {
@@ -291,7 +291,7 @@ private struct StartPage: View {
                 .background(Theme.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Theme.line))
                 .frame(maxWidth: 420)
-                .padding(.top, 30)
+                .padding(.top, 24)
             }
         }
         .padding(40)

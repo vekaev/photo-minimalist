@@ -120,15 +120,15 @@ struct RecentFoldersList: View {
                     ForEach(recents.items) { item in
                         Button { recents.open(item, in: library) } label: {
                             HStack(spacing: 12) {
-                                Image(systemName: "folder.fill").font(.system(size: 15))
-                                    .frame(width: 34, height: 34)
-                                    .background(Ink.paper, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                Text(item.name).font(.body.weight(.medium)).lineLimit(1)
+                                Image(systemName: "folder.fill").font(.system(size: 13))
+                                    .frame(width: 28, height: 28)
+                                    .background(Ink.paper, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                Text(item.name).font(.callout.weight(.medium)).lineLimit(1)
                                 Spacer()
                                 Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
                             }
                             .padding(.horizontal, 12)
-                            .frame(minHeight: 54)
+                            .frame(minHeight: 46)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -139,11 +139,11 @@ struct RecentFoldersList: View {
                             }
                             Button(role: .destructive) { recents.remove(item) } label: { Label("Remove from Recent", systemImage: "minus.circle") }
                         }
-                        if item != recents.items.last { Ink.rule.frame(height: Ink.hairline).padding(.leading, 58) }
+                        if item != recents.items.last { Ink.rule.frame(height: Ink.hairline).padding(.leading, 52) }
                     }
                 }
-                .background(Ink.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .background(Ink.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
             .padding(.horizontal, 24)
         }

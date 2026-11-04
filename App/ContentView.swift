@@ -251,55 +251,52 @@ private struct CardBanner: View {
 
 // MARK: Start
 
+/// Stoic-like: an ink drawing, a bold lowercase headline, one black pill. Paper off-white by day, black at night.
 private struct StartPage: View {
     @Environment(Library.self) private var library
 
     var body: some View {
-        VStack(spacing: 22) {
-            LevelMark().frame(width: 132, height: 44)
-            VStack(spacing: 6) {
-                Text("Photo Minimalist").font(.system(size: 28, weight: .semibold))
-                Text("Preview, level, crop. Nothing else.")
-                    .foregroundStyle(.secondary)
-            }
+        VStack(spacing: 0) {
+            StartArt(ink: Theme.ink).frame(width: 240, height: 164)
+                .padding(.bottom, 26)
+            InkHeadline(text: "photo minimalist.", size: 46).foregroundStyle(Theme.ink)
+            Text("Preview, level, crop. Nothing else.")
+                .font(.title3).foregroundStyle(.secondary)
+                .padding(.top, 8)
             Button { library.chooseFolder() } label: {
-                Text("Open folder…").fontWeight(.medium)
-                    .padding(.horizontal, 22).padding(.vertical, 10)
-                    .foregroundStyle(Theme.ground)
-                    .background(Color.primary, in: Capsule())
+                Text("Open folder")
+                    .font(.system(size: 15, weight: .semibold))
+                    .frame(minWidth: 190, minHeight: 48)
+                    .padding(.horizontal, 8)
+                    .foregroundStyle(Theme.paper)
+                    .background(Theme.ink, in: Capsule())
+                    .contentShape(Capsule())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(InkPress())
             .keyboardShortcut("o")
+            .help("Open a folder of photos (⌘O)")
+            .padding(.top, 34)
             Text("or drop a folder here").font(.callout).foregroundStyle(.tertiary)
+                .padding(.top, 14)
             if let notice = library.notice {
-                Text(notice).font(.callout).foregroundStyle(.secondary).padding(.top, 8)
+                // "“Untitled” was ejected": a quiet card with one black glyph.
+                HStack(spacing: 12) {
+                    Image(systemName: "sdcard").font(.system(size: 15, weight: .semibold))
+                        .frame(width: 32, height: 32)
+                        .background(Theme.paper, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    Text(notice).font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.leading, 10).padding(.trailing, 18).padding(.vertical, 10)
+                .background(Theme.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Theme.line))
+                .frame(maxWidth: 420)
+                .padding(.top, 30)
             }
         }
+        .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-
-/// The app's mark: a horizon line broken by a level bubble.
-struct LevelMark: View {
-    var lineWidth: CGFloat = 2.5
-    var body: some View {
-        Canvas { ctx, size in
-            // The app icon's lens: a sunset split by a dead-level horizon.
-            let r = min(size.width, size.height) / 2, c = CGPoint(x: size.width / 2, y: size.height / 2)
-            let horizon = c.y + r * 0.12, gap = max(1.5, r * 0.07)
-            let disc = Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
-            ctx.clip(to: disc)
-            ctx.fill(Path(CGRect(x: 0, y: 0, width: size.width, height: horizon - gap / 2)),
-                     with: .linearGradient(Gradient(colors: [Color(red: 1, green: 0.77, blue: 0.25), Color(red: 1, green: 0.42, blue: 0.32), Color(red: 0.93, green: 0.21, blue: 0.47)]),
-                                           startPoint: CGPoint(x: c.x, y: c.y - r), endPoint: CGPoint(x: c.x, y: horizon)))
-            let sun = r * 0.34
-            ctx.fill(Path(ellipseIn: CGRect(x: c.x - sun, y: horizon - gap / 2 - sun, width: 2 * sun, height: 2 * sun)), with: .color(Color(red: 1, green: 0.93, blue: 0.78)))
-            ctx.fill(Path(CGRect(x: 0, y: horizon - gap / 2, width: size.width, height: gap)), with: .color(.white))
-            ctx.fill(Path(CGRect(x: 0, y: horizon + gap / 2, width: size.width, height: size.height)),
-                     with: .linearGradient(Gradient(colors: [Color(red: 0.25, green: 0.47, blue: 1), Color(red: 0.18, green: 0.2, blue: 0.77)]),
-                                           startPoint: CGPoint(x: c.x, y: horizon), endPoint: CGPoint(x: c.x, y: c.y + r)))
-        }
-        .accessibilityHidden(true)
+        .background(Theme.paper)
     }
 }
 

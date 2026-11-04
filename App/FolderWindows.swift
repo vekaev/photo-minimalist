@@ -198,7 +198,8 @@ private struct TopBar: View {
         .frame(maxWidth: .infinity)
         // Empty parts of the bar move the window; a double-click zooms, like a title bar.
         .background(WindowDragArea())
-        .background(Theme.panel)
+        // On the start page the bar is the same paper as the page below it.
+        .background(library.folder == nil ? Theme.paper : Theme.panel)
         .overlay(alignment: .bottom) { Theme.line.frame(height: 1) }
     }
 

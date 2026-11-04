@@ -183,6 +183,9 @@ enum Ink {
     static let hairline: CGFloat = 1 / 3
     static let rule = Color.primary.opacity(0.12)
     static let faint = Color.primary.opacity(0.45)
+    /// The start screen: soft off-white paper, pure black at night (Stoic-like), with white / near-black cards on it.
+    static let paper = Color(UIColor { $0.userInterfaceStyle == .dark ? .black : UIColor(red: 0.965, green: 0.961, blue: 0.949, alpha: 1) })
+    static let card = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.11, alpha: 1) : .white })
 }
 
 struct FolderPicker: ViewModifier {

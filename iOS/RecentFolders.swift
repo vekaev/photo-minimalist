@@ -104,7 +104,7 @@ struct SwitchFolderMenu: View {
     }
 }
 
-/// Recent folders on the start screen: plain rows, hairline separated.
+/// Recent folders on the start screen: one rounded card, a black folder glyph per row, hairlines between.
 struct RecentFoldersList: View {
     @Environment(Library.self) private var library
     @Environment(\.supportsMultipleWindows) private var multipleWindows
@@ -113,31 +113,39 @@ struct RecentFoldersList: View {
 
     var body: some View {
         if !recents.items.isEmpty {
-            VStack(alignment: .leading, spacing: 0) {
-                Text("Recent").font(.footnote).foregroundStyle(Ink.faint)
-                    .padding(.bottom, 6)
-                ForEach(recents.items) { item in
-                    Button { recents.open(item, in: library) } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: "folder").foregroundStyle(.secondary)
-                            Text(item.name).lineLimit(1)
-                            Spacer()
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Recent").font(.footnote.weight(.semibold)).foregroundStyle(Ink.faint)
+                    .padding(.leading, 6)
+                VStack(spacing: 0) {
+                    ForEach(recents.items) { item in
+                        Button { recents.open(item, in: library) } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "folder.fill").font(.system(size: 15))
+                                    .frame(width: 34, height: 34)
+                                    .background(Ink.paper, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                Text(item.name).font(.body.weight(.medium)).lineLimit(1)
+                                Spacer()
+                                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                            }
+                            .padding(.horizontal, 12)
+                            .frame(minHeight: 54)
+                            .contentShape(Rectangle())
                         }
-                        .frame(minHeight: 44)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .hoverEffect(.highlight)
-                    .contextMenu {
-                        if multipleWindows {
-                            Button { openWindow(value: FolderLink(item)) } label: { Label("Open in New Window", systemImage: "macwindow.badge.plus") }
+                        .buttonStyle(.plain)
+                        .hoverEffect(.highlight)
+                        .contextMenu {
+                            if multipleWindows {
+                                Button { openWindow(value: FolderLink(item)) } label: { Label("Open in New Window", systemImage: "macwindow.badge.plus") }
+                            }
+                            Button(role: .destructive) { recents.remove(item) } label: { Label("Remove from Recent", systemImage: "minus.circle") }
                         }
-                        Button(role: .destructive) { recents.remove(item) } label: { Label("Remove from Recent", systemImage: "minus.circle") }
+                        if item != recents.items.last { Ink.rule.frame(height: Ink.hairline).padding(.leading, 58) }
                     }
-                    if item != recents.items.last { Ink.rule.frame(height: Ink.hairline) }
                 }
+                .background(Ink.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             }
-            .padding(.horizontal, 32)
+            .padding(.horizontal, 24)
         }
     }
 }

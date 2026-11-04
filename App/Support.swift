@@ -11,6 +11,11 @@ enum Theme {
     static let ground = dynamic(gray(1.0), gray(0.098))      // page
     static let panel = dynamic(NSColor(red: 0.969, green: 0.969, blue: 0.961, alpha: 1), gray(0.125)) // sidebar
     static let raised = dynamic(gray(0.925), gray(0.18))     // selected row, keycaps
+    /// The start page: soft off-white paper, pure black at night (Stoic-like), with white / near-black cards on it.
+    static let paper = dynamic(NSColor(red: 0.965, green: 0.961, blue: 0.949, alpha: 1), gray(0))
+    static let card = dynamic(gray(1.0), gray(0.11))
+    /// Pure ink for the start page's drawing, headline and pill.
+    static let ink = dynamic(gray(0), gray(1))
     static let line = Color.primary.opacity(0.09)            // hairlines
     static let accent = Color.primary
     static let keep = Color.primary

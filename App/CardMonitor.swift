@@ -1,6 +1,7 @@
 import AppKit
 import DiskArbitration
 import Foundation
+import IOKit
 
 /// What to do when a memory card with photos is inserted (Mac only: iOS apps aren't told about cards).
 enum CardAction: String, CaseIterable, Identifiable {
@@ -54,6 +55,7 @@ final class CardMonitor {
             MainActor.assumeIsolated { self?.cardRemoved(url) }
         })
         watchForDisks()
+        watchSDSlots()
         // A card that's already in when the app starts.
         let volumes = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: [.volumeIsRemovableKey], options: [.skipHiddenVolumes]) ?? []
         for v in volumes where (try? v.resourceValues(forKeys: [.volumeIsRemovableKey]).volumeIsRemovable) == true {
@@ -152,6 +154,49 @@ final class CardMonitor {
                 }
             }
         }
+    }
+
+    // MARK: The SD slot (seconds before the disk)
+
+    private var slotPort: IONotificationPortRef?
+    private var slotNotes: [io_object_t] = []
+    private var slotConnected: [io_service_t: Bool] = [:]
+
+    /// The Mac's own SD slot (`AppleSDXCSlot`) reports a card the moment it touches the contacts; macOS then
+    /// spends ~3 s waking the card up and ~0.5 s mounting it before any disk exists. Watching the slot's
+    /// "ConnectionActive" lets the window come forward with "Reading memory card…" right away instead of after
+    /// those seconds. USB card readers have no such slot: for them the disk callback below does it.
+    private func watchSDSlots() {
+        guard slotPort == nil, let port = IONotificationPortCreate(kIOMainPortDefault) else { return }
+        slotPort = port
+        IONotificationPortSetDispatchQueue(port, .main)
+        var iterator: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("AppleSDXCSlot"), &iterator) == KERN_SUCCESS else { return }
+        defer { IOObjectRelease(iterator) }
+        let context = Unmanaged.passUnretained(self).toOpaque()
+        while case let slot = IOIteratorNext(iterator), slot != 0 {
+            slotConnected[slot] = Self.connected(slot)
+            var note: io_object_t = 0
+            let result = IOServiceAddInterestNotification(port, slot, kIOGeneralInterest, { context, slot, _, _ in
+                guard let context else { return }
+                let monitor = Unmanaged<CardMonitor>.fromOpaque(context).takeUnretainedValue()
+                MainActor.assumeIsolated { monitor.slotChanged(slot) }
+            }, context, &note)
+            if result == KERN_SUCCESS { slotNotes.append(note) }
+        }
+    }
+
+    private nonisolated static func connected(_ slot: io_service_t) -> Bool {
+        let value = IORegistryEntryCreateCFProperty(slot, "ConnectionActive" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue()
+        return (value as? Bool) ?? false
+    }
+
+    private func slotChanged(_ slot: io_service_t) {
+        let now = Self.connected(slot)
+        defer { slotConnected[slot] = now }
+        guard now, slotConnected[slot] == false, CardAction.current == .open else { return }
+        Library.log("card: in the SD slot")
+        WindowRouter.shared.cardDetected(name: nil)
     }
 
     // MARK: Detected before it's mounted

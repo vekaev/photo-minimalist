@@ -1,5 +1,5 @@
 # dmgbuild settings for dist/PhotoMinimalist-mac.dmg (scripts/build-app.sh): the window that opens with the DMG.
-# The app on the left, Applications on the right, the arrow and the text in the background
+# White and minimal: the app on the left, Applications on the right, the arrow and the text in the background
 # (scripts/make-dmg-background.swift draws it on the same 640×420 grid).
 import os.path
 

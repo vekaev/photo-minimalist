@@ -167,6 +167,8 @@ Photo Minimalist is a previewer first, so speed matters. A modern camera card re
 | Camera details (date, exposure, sizes) | the file's header only, then the folder's `.horizonleveler.json` | **a few ms**, once |
 | Anything seen before | a disk cache on your Mac | **~0 ms** |
 
+Insert the card you used last and its photos are on screen at once (in about 0.05 s, measured), from a small copy of the folder's list and thumbnails the Mac keeps; macOS needs about 5 more seconds to mount the card, and only then can you edit.
+
 What's on screen loads before the background check, and the check saves each grid thumbnail as it goes. Measured on a SanDisk Extreme PRO in a MacBook's built-in reader: 969 RAW + JPEG pairs analyzed in **79 seconds**.
 
 ## Built for the terminal

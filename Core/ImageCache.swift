@@ -92,9 +92,24 @@ final class ImageCache: @unchecked Sendable {
     }
 
     /// Cache file named after the photo's path, size and modification date, so edits invalidate it.
+    /// Size and date of files that can't be read yet (a memory card macOS is still mounting), so their cached
+    /// thumbnails can be found anyway. Set from the Mac-side snapshot of the card (App/CardSnapshot.swift).
+    private static let knownLock = NSLock()
+    nonisolated(unsafe) private static var known: [String: (size: Int, modified: Double)] = [:]
+    static func setKnownAttributes(_ attributes: [String: (size: Int, modified: Double)]) {
+        knownLock.lock(); known = attributes; knownLock.unlock()
+    }
+
     private static func diskURL(for url: URL, maxPixel: Int, in folder: URL) -> URL? {
-        guard let v = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]) else { return nil }
-        let id = "\(url.path)|\(v.fileSize ?? 0)|\(v.contentModificationDate?.timeIntervalSince1970 ?? 0)|\(maxPixel)"
+        let size: Int, modified: Double
+        if let v = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]) {
+            size = v.fileSize ?? 0; modified = v.contentModificationDate?.timeIntervalSince1970 ?? 0
+        } else {
+            knownLock.lock(); let k = known[url.path]; knownLock.unlock()
+            guard let k else { return nil }
+            size = k.size; modified = k.modified
+        }
+        let id = "\(url.path)|\(size)|\(modified)|\(maxPixel)"
         let hash = SHA256.hash(data: Data(id.utf8)).prefix(16).map { String(format: "%02x", $0) }.joined()
         return folder.appendingPathComponent(hash + ".jpg")
     }

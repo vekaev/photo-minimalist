@@ -153,7 +153,8 @@ struct PhotoView: View {
         .onKeyPress(phases: [.down, .repeat, .up]) { handle($0) }
         // ⌘Z / ⇧⌘Z step through crop mode's frame changes, and take back a placed point in the level tool.
         .modifier(ToolUndoBridge(state: toolUndoState, enabled: !floating, perform: toolUndo))
-        .task(id: photo.url) {
+        // Also again once a card's preview turns into the mounted folder (the sharp image needs the card).
+        .task(id: "\(photo.url.path)|\(library.isPreview)") {
             // This view is reused from photo to photo: never keep showing the previous photo's image. Start from
             // whatever is cached for this one (thumbnail or sharp), and ignore loads that finish after moving on.
             let url = photo.url
@@ -1090,6 +1091,7 @@ struct PhotoView: View {
     }
 
     private func handle(_ press: KeyPress) -> KeyPress.Result {
+        guard !library.isPreview else { return .ignored }   // a card's read-only preview: wait for the mount
         if fixesMode {
             // Esc / ↵ close Fixes; arrows still move between photos (the panel stays open); nothing else.
             guard press.phase == .down else { return .handled }

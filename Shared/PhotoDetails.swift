@@ -7,7 +7,7 @@ extension Library {
     /// Reads a photo's camera details once it's on screen: one small header read through the ReadGate
     /// (on-screen priority), then cached in the folder's json. Does nothing when the details are known.
     func fillInfo(_ p: Photo) async {
-        guard p.info == nil, !infoInFlight.contains(p.url) else { return }
+        guard p.info == nil, !isPreview, !infoInFlight.contains(p.url) else { return }
         let url = p.url, companions = p.companions
         infoInFlight.insert(url)
         defer { infoInFlight.remove(url) }

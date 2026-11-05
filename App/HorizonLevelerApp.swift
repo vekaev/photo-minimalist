@@ -34,7 +34,7 @@ struct HorizonLevelerApp: App {
             else { action() }
         }
         .keyboardShortcut(KeyEquivalent(key), modifiers: [])
-        .disabled(library.folder == nil)
+        .disabled(!library.isReady)
     }
 
     var body: some Scene {
@@ -112,19 +112,19 @@ struct HorizonLevelerApp: App {
                 // actual pixels: ⌘1…9 switch tabs.
                 Button("Zoom In") { library.requestZoom(.zoomIn) }
                     .keyboardShortcut("+")
-                    .disabled(library.folder == nil)
+                    .disabled(!library.isReady)
                 Button("Zoom Out") { library.requestZoom(.zoomOut) }
                     .keyboardShortcut("-")
-                    .disabled(library.folder == nil)
+                    .disabled(!library.isReady)
                 Button("Fit") { library.requestZoom(.fit) }
                     .keyboardShortcut("0")
-                    .disabled(library.folder == nil)
+                    .disabled(!library.isReady)
                 Divider()
                 Button("History") { library.showActivity = true }
                     .keyboardShortcut("y")
-                    .disabled(library.folder == nil)
+                    .disabled(!library.isReady)
                 Button("Customize Controls…") { library.showControls = true }
-                    .disabled(library.folder == nil)
+                    .disabled(!library.isReady)
             }
             // Says what it will undo ("Undo Level DSCF0015", "Undo Crop Frame" in crop mode). A text field being
             // edited (History search) keeps its own undo; while the History sheet is up the items stay enabled for it.
@@ -152,9 +152,9 @@ struct HorizonLevelerApp: App {
                 photoKey("Adjust", "e") { library.adjustTool.toggle() }
                 Divider()
                 Button("Auto Light") { library.autoLight(targets.map(\.id)) }
-                    .disabled(library.folder == nil || targets.isEmpty)
+                    .disabled(!library.isReady || targets.isEmpty)
                 Button("Reset Light") { library.resetLight(targets.map(\.id)) }
-                    .disabled(library.folder == nil || !targets.contains { $0.light != nil })
+                    .disabled(!library.isReady || !targets.contains { $0.light != nil })
             }
         }
 

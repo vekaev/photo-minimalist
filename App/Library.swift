@@ -58,6 +58,11 @@ final class Library {
     var toast: String?
     /// Set when the open folder's card was ejected, to say so instead of silently showing nothing.
     var notice: String?
+    /// Showing a memory card's photos from the Mac's snapshot while macOS is still mounting the card
+    /// (`openPreview`, Mac only): read-only; the real folder replaces it on mount. Always false on iOS.
+    var isPreview = false
+    /// A folder is open and can be edited (not the read-only preview of a card that's still mounting).
+    var isReady: Bool { folder != nil && !isPreview }
     #if os(macOS)
     /// What to do when a memory card is inserted.
     var cardAction = CardAction.current {
@@ -292,6 +297,7 @@ final class Library {
     func open(_ url: URL) {
         analysisTask?.cancel()
         saveNow()
+        isPreview = false
         discardAllSlots()
         // Folders picked in Files (iOS) are security-scoped: hold access while the folder is open.
         scopedFolder?.stopAccessingSecurityScopedResource()
@@ -338,7 +344,46 @@ final class Library {
         #endif
         analyze()
         restoreLastPhoto()
+        #if os(macOS)
+        // A memory card: keep a copy on the Mac, so its photos show the moment the card goes back in.
+        CardSnapshot.capture(folder: url, photos: photos.map { ($0.url, $0.companions) }, state: stateData() ?? Data())
+        #endif
     }
+
+    #if os(macOS)
+    /// The card folder from the Mac-side snapshot, while macOS is still mounting the card: the same photos,
+    /// decisions and thumbnails (from the Mac's cache), read-only. `open` on the mounted folder replaces it.
+    func openPreview(_ snapshot: CardSnapshot) {
+        analysisTask?.cancel()
+        saveNow()
+        discardAllSlots()
+        let url = URL(fileURLWithPath: snapshot.folder)
+        isPreview = true
+        folder = url
+        selection = []
+        openedID = nil
+        undoStack = []
+        redoStack = []
+        toolUndo = nil
+        resetActivity(nil)
+        ImageCache.setKnownAttributes(Dictionary(snapshot.files.map { ($0.path, (size: $0.size, modified: $0.modified)) }, uniquingKeysWith: { a, _ in a }))
+        let saved = (try? JSONDecoder().decode([String: Photo.Saved].self, from: snapshot.state)) ?? [:]
+        let base = url.standardizedFileURL.path + "/"
+        photos = snapshot.files.map { f in
+            let file = URL(fileURLWithPath: f.path)
+            let id = file.standardizedFileURL.path.replacingOccurrences(of: base, with: "")
+            let p = Photo(id: id, url: file, companions: f.companions.map { URL(fileURLWithPath: $0) })
+            if let s = saved[id] { p.restore(s) }
+            return p
+        }
+        byID = Dictionary(photos.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        analyzedCount = photos.filter(\.analyzed).count
+        notice = nil
+        filter = .review
+        Self.log("card: preview of \(url.lastPathComponent) from the snapshot, \(photos.count) photos")
+        restoreLastPhoto()
+    }
+    #endif
 
     // MARK: Last photo per folder
 
@@ -505,6 +550,7 @@ final class Library {
         isAnalyzing = false
         resetActivity(nil)
         self.notice = notice
+        isPreview = false
     }
 
     /// Kept for older call sites.
@@ -1647,10 +1693,17 @@ final class Library {
     }
 
     func saveNow() {
-        guard let folder else { return }
-        let state = Dictionary(uniqueKeysWithValues: photos.filter { $0.analyzed || $0.history.count > 1 || $0.favorite || !$0.cropVersions.isEmpty || $0.info != nil || $0.savedBandFix != nil || !$0.savedLights.isEmpty }.map { ($0.id, $0.saved) })
-        guard let data = try? JSONEncoder().encode(state) else { return }
+        guard let folder, !isPreview, let data = stateData() else { return }
         try? data.write(to: folder.appendingPathComponent(Self.stateFileName), options: .atomic)
+        #if os(macOS)
+        CardSnapshot.update(folder: folder, state: data)
+        #endif
+    }
+
+    /// The folder's decisions as stored in `.horizonleveler.json`.
+    private func stateData() -> Data? {
+        let state = Dictionary(uniqueKeysWithValues: photos.filter { $0.analyzed || $0.history.count > 1 || $0.favorite || !$0.cropVersions.isEmpty || $0.info != nil || $0.savedBandFix != nil || !$0.savedLights.isEmpty }.map { ($0.id, $0.saved) })
+        return try? JSONEncoder().encode(state)
     }
 }
 

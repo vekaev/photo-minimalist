@@ -66,6 +66,8 @@ struct ContentView: View {
         .onChange(of: library.reviewOrder) { refreshList(keepSelection: true) }
         // Re-sort once the background check finishes, so new suggestions move to the top.
         .onChange(of: library.isAnalyzing) { _, busy in if !busy && library.filter == .review { refreshList(keepSelection: true) } }
+        // A card's preview (from the Mac's snapshot) can't be edited until macOS has mounted the card (~4 s).
+        .allowsHitTesting(!library.isPreview)
         .overlay(alignment: .bottom) { CardBanner() }
         .overlay(alignment: .topTrailing) { CardNoteView() }
         .overlay(alignment: .bottom) { Toast() }
@@ -484,7 +486,7 @@ struct PhotoList: View {
         .onChange(of: showPreview) { _, shown in focused = !shown }
         .onChange(of: library.quickLook) { _, open in if !open && !showPreview { focused = true } }
         .onKeyPress { press in
-            guard !showPreview, let id = library.openedID else { return .ignored }
+            guard !showPreview, !library.isPreview, let id = library.openedID else { return .ignored }
             switch press.key {
             case .upArrow, .leftArrow: library.step(-1); return .handled
             case .downArrow, .rightArrow: library.step(1); return .handled
@@ -713,7 +715,8 @@ struct PhotoThumb: View {
             }
         }
         .clipped()
-        .task(id: photo.url) {
+        // Again once a card's preview turns into the mounted folder (loads that missed can now read the card).
+        .task(id: "\(photo.url.path)|\(library.isPreview)") {
             if maxPixel > 200, image == nil {
                 image = await ImageCache.shared.image(for: photo.url, rawCompanion: photo.rawCompanion, maxPixel: 160)
             }
@@ -897,6 +900,7 @@ private struct GridPage: View {
     }
 
     private func handle(_ press: KeyPress, _ ids: [String]) -> KeyPress.Result {
+        guard !library.isPreview else { return .ignored }   // a card's read-only preview: wait for the mount
         let current = ids.firstIndex { library.selection.contains($0) }
         func move(_ d: Int) -> KeyPress.Result {
             guard !ids.isEmpty else { return .handled }

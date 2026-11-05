@@ -137,7 +137,7 @@ final class CardMonitor {
             }
             let result = found
             await MainActor.run {
-                guard let (folder, count) = result else { WindowRouter.shared.cardNotFound(); return }
+                guard let (folder, count) = result else { WindowRouter.shared.cardNotFound(volume: volume); return }
                 let path = folder.standardizedFileURL.path
                 let alreadyOpen = WindowRouter.shared.libraries.contains { $0.folder?.standardizedFileURL.path == path }
                 // It opens (this tab if it's empty, else a new tab, or its tab if the folder was reopened) and the
@@ -193,8 +193,11 @@ final class CardMonitor {
 
     private func slotChanged(_ slot: io_service_t) {
         let now = Self.connected(slot)
+        let was = slotConnected[slot]
         defer { slotConnected[slot] = now }
-        guard now, slotConnected[slot] == false, CardAction.current == .open else { return }
+        // Out of the slot before macOS mounted it: drop the preview (a mounted card closes on unmount instead).
+        if !now, was == true { WindowRouter.shared.cardNotFound(); return }
+        guard now, was == false, CardAction.current == .open else { return }
         Library.log("card: in the SD slot")
         WindowRouter.shared.cardDetected(name: nil)
     }

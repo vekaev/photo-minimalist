@@ -126,7 +126,7 @@ struct FolderWindow: View {
     /// F = favorite, ⌘⌫ = Move to Trash (asks first, with "Don't ask again", unless that was turned off).
     /// Acts on the open photo, or the grid's selection, like the Photo and Edit menus. A text field keeps its keys.
     static func photoKey(_ e: NSEvent, _ library: Library) -> Bool {
-        guard e.type == .keyDown, !e.isARepeat, library.folder != nil, !(e.window?.firstResponder is NSTextView) else { return false }
+        guard e.type == .keyDown, !e.isARepeat, library.isReady, !(e.window?.firstResponder is NSTextView) else { return false }
         let mods = e.modifierFlags.intersection([.command, .option, .control, .shift])
         let targets = library.copyTargets(preferOpened: library.quickLook || UserDefaults.standard.string(forKey: "viewMode") != "grid").map(\.id)
         guard !targets.isEmpty else { return false }
@@ -446,20 +446,54 @@ final class WindowRouter {
             NSApp.activate()
             return
         }
-        library.cardNote = .reading(name ?? "")
-        Self.bringForward(tabs(of: library)?.window)
+        // The last card's photos right away, from the Mac's snapshot (read-only until the card is mounted).
+        let target = startPreview(near: library) ?? library
+        target.cardNote = .reading(name ?? "")
+        Self.bringForward(tabs(of: target)?.window)
     }
 
-    /// The card had no photos (or none could be read): drop "Reading…".
-    func cardNotFound() {
+    /// Opens the Mac-side snapshot of the last card folder (`CardSnapshot`) as a read-only preview: in this tab
+    /// if it's empty, else in a new one. A second call (the disk appearing after the slot) returns the same one.
+    private func startPreview(near library: Library) -> Library? {
+        if let existing = libraries.first(where: \.isPreview) { return existing }
+        guard CardAction.current == .open, let snapshot = CardSnapshot.load(),
+              !FileManager.default.fileExists(atPath: snapshot.folder),   // already mounted: the real thing is coming
+              !libraries.contains(where: { $0.folder?.path == snapshot.folder }) else { return nil }
+        let target: Library
+        if library.folder == nil { target = library }
+        else if let tabs = tabs(of: library) { target = tabs.newTab() }
+        else { return nil }
+        target.openPreview(snapshot)
+        tabs(of: target)?.select(target)
+        // The card never mounted (macOS gave up, or it was taken out early): don't leave the preview behind.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 60) { [weak self, weak target] in
+            guard let self, let target, target.isPreview else { return }
+            self.close(target)
+        }
+        return target
+    }
+
+    /// Drop "Reading…" (the folder is about to open, or there's nothing to open).
+    private func clearReading() {
         for l in libraries { if case .reading = l.cardNote { l.cardNote = nil } }
+    }
+
+    /// The card had no photos, couldn't be read, or left the slot before it was mounted: drop "Reading…"
+    /// and close a preview of the last card.
+    /// `volume`: only previews of that volume (another disk mounting says nothing about this card).
+    func cardNotFound(volume: URL? = nil) {
+        clearReading()
+        for l in libraries where l.isPreview {
+            if let volume, l.folder?.path.hasPrefix(volume.standardizedFileURL.path + "/") != true { continue }
+            close(l)
+        }
     }
 
     /// A memory card went in (Settings: "Open and show it"): its folder opens in this window's tab if it's
     /// empty, else in a new tab, and the window comes forward, also from another app, when minimized or
     /// when every window was closed. `show: false` (a card that was already in at launch) only opens it.
     func openCard(_ folder: URL, volumeName: String, show: Bool) {
-        cardNotFound()
+        clearReading()
         guard let library = frontLibrary else {
             pendingCard = (folder, volumeName)
             if show { NSApp.unhide(nil); NSApp.activate() }
@@ -470,7 +504,14 @@ final class WindowRouter {
             }
             return
         }
-        open(folder, from: library)
+        if let preview = libraries.first(where: \.isPreview) {
+            // The mounted card replaces its preview in the same tab (or another card's folder takes it over).
+            preview.open(folder)
+            tabs(of: preview)?.select(preview)
+            persist()
+        } else {
+            open(folder, from: library)
+        }
         guard show else { return }
         // Top right: "Opened “Untitled” automatically · Ask First · Keep", until it's answered once.
         let shown = self.library(showing: folder)

@@ -64,7 +64,7 @@ struct PhotoView: View {
     @State private var showHistory = false
     /// The pointer is on the corner chip: preview the leveled photo and show the suggested line.
     @State private var chipHover = false
-    /// Zoom and pan of the photo (pinch, ⌥-scroll, ⌘+ / ⌘− / ⌘0); back to fit for every new photo.
+    /// Zoom and pan of the photo (pinch, ⌘-scroll or ⌥-scroll, ⌘+ / ⌘− / ⌘0); back to fit for every new photo.
     @State private var zoom = PreviewZoom()
     /// Where the pan was when a plain drag on the zoomed photo started (browse mode).
     @State private var panStart: CGSize?
@@ -510,6 +510,16 @@ struct PhotoView: View {
         .allowsHitTesting(false)
     }
 
+    /// The whole photo, small, while zoomed in, showing the same picture as the canvas.
+    private func navigator(frame: CGRect, area: CGSize, rotation: Double, crop: CGRect?) -> some View {
+        ZoomNavigator(zoom: zoom, frame: frame, area: area, movable: !levelMode && !cropMode,
+                      move: { zoom.center(on: $0); focused = true }) {
+            if let image {
+                EditedImage(image: image, rotation: rotation, crop: crop, fix: showOriginal ? nil : photo.bandFixSource, light: shownLight)
+            }
+        }
+    }
+
     /// The crop shown in the main pane: the saved crop, except while editing the crop or viewing the original.
     private var displayCrop: CGRect? { cropMode || showOriginal ? nil : photo.appliedCrop }
 
@@ -580,7 +590,7 @@ struct PhotoView: View {
             .clipped()
             .contentShape(Rectangle())
             .coordinateSpace(name: "canvas")
-            // Pinch, ⌥-scroll, two-finger scroll, smart zoom, ⌥-double-click (CanvasEvents.swift).
+            // Pinch, ⌘/⌥-scroll, two-finger scroll, smart zoom, ⌥-double-click (CanvasEvents.swift).
             .background { if interactive { CanvasEvents { e, p in canvasEvent(e, p) } } }
             .onChange(of: [fit.width, fit.height, area.width, area.height], initial: true) {
                 if interactive { zoom.layout(fit: fit, area: area) }
@@ -632,6 +642,10 @@ struct PhotoView: View {
             }
             .overlay(alignment: .bottomTrailing) {
                 if interactive { ZoomPill(zoom: zoom) { withAnimation(.easeOut(duration: 0.18)) { zoom.reset() } } }
+            }
+            // Top left, or bottom left when the level tool's loupes sit along the top.
+            .overlay(alignment: levelMode && showGuide && showLoupes && guideY > 0.62 ? .bottomLeading : .topLeading) {
+                if interactive { navigator(frame: frame, area: area, rotation: rotation, crop: crop) }
             }
             .animation(.easeOut(duration: 0.2), value: zoom.isZoomed)
         }
@@ -884,7 +898,7 @@ struct PhotoView: View {
             }
     }
 
-    /// Zoom input from the canvas (CanvasEvents): pinch, scroll, smart zoom, ⌥-double-click, ⌘=.
+    /// Zoom input from the canvas (CanvasEvents): pinch, ⌘/⌥-scroll, two-finger scroll, smart zoom, ⌥-double-click, ⌘=.
     private func canvasEvent(_ e: NSEvent, _ p: CGPoint) -> Bool {
         // The pane under quick look leaves events to the floating card; the crop studio sheet has its own window.
         guard floating || !library.quickLook, !showStudio else { return false }

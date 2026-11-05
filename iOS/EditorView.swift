@@ -444,6 +444,7 @@ struct EditorView: View {
                     // Above the "Level along this line" bar.
                     .padding(.bottom, levelMode && !pick.isEmpty ? 50 : 0)
             }
+            .overlay(alignment: .topLeading) { navigator(frame: frame, area: area, rotation: rotation, crop: crop) }
             .animation(.easeOut(duration: 0.2), value: zoom.isZoomed)
             // iPad: the Mac's info card, bottom left over the photo (ⓘ or I).
             .overlay(alignment: .bottomLeading) {
@@ -536,6 +537,13 @@ struct EditorView: View {
     }
 
     // MARK: Zoom
+
+    /// The whole photo, small, while zoomed in, showing the same picture as the canvas.
+    private func navigator(frame: CGRect, area: CGSize, rotation: Double, crop: CGRect?) -> some View {
+        ZoomNavigator(zoom: zoom, frame: frame, area: area, movable: !levelMode && !cropMode, move: { zoom.center(on: $0) }) {
+            if let image { EditedImage(image: image, rotation: rotation, crop: crop, fix: shownFix, light: shownLight) }
+        }
+    }
 
     /// The current one-finger drag saw two fingers come down (or is happening under them).
     private var dragSawPinch: Bool { pinching || (dragStart.map { lastPinch >= $0 } ?? false) }

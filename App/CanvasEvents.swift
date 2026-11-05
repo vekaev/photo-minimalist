@@ -50,7 +50,7 @@ struct CanvasEvents: NSViewRepresentable {
 
 extension PreviewZoom {
     /// The Mac's zoom input for a canvas: pinch (at the pointer), smart zoom (two-finger double-tap) and
-    /// ⌥-double-click (fit ⇄ 2×), ⌥-scroll (zoom at the pointer), two-finger scroll (pan while zoomed), ⌘=.
+    /// ⌥-double-click (fit ⇄ 2×), ⌘-scroll or ⌥-scroll (zoom at the pointer), two-finger scroll (pan while zoomed), ⌘=.
     /// `p` is in canvas coordinates. Returns true when the event was used.
     mutating func handle(_ e: NSEvent, at p: CGPoint) -> Bool {
         let inside = CGRect(origin: .zero, size: area).contains(p)
@@ -66,7 +66,7 @@ extension PreviewZoom {
         case .scrollWheel:
             guard inside else { return false }
             let k: CGFloat = e.hasPreciseScrollingDeltas ? 1 : 10
-            if e.modifierFlags.contains(.option) {
+            if !e.modifierFlags.intersection([.command, .option]).isEmpty {
                 // Wheel / fingers up zooms in.
                 let d = (abs(e.scrollingDeltaY) >= abs(e.scrollingDeltaX) ? e.scrollingDeltaY : e.scrollingDeltaX) * k
                 zoom(to: scale * exp(d * 0.01), at: p)

@@ -81,6 +81,11 @@ struct PreviewZoom: Equatable {
     mutating func pan(by d: CGSize) { pan = clamped(CGSize(width: pan.width + d.width, height: pan.height + d.height), scale: scale) }
     mutating func pan(to p: CGSize) { pan = clamped(p, scale: scale) }
 
+    /// Put this spot of the photo (0…1 of its width and height) in the middle of the canvas, as far as the clamp allows.
+    mutating func center(on u: CGPoint) {
+        pan(to: CGSize(width: fit.width * scale * (0.5 - u.x), height: fit.height * scale * (0.5 - u.y)))
+    }
+
     mutating func reset() { scale = 1; pan = .zero }
 
     /// Double-click / double-tap: fit ⇄ 2× at the point.
@@ -131,6 +136,69 @@ struct ZoomPill: View {
             .background(.black.opacity(0.55), in: Capsule())
             .padding(10)
             .transition(.opacity)
+        }
+    }
+}
+
+/// While zoomed in: the whole photo, small, with the part on screen outlined and the rest dimmed.
+/// Press or drag it to move around the photo.
+struct ZoomNavigator<Photo: View>: View {
+    let zoom: PreviewZoom
+    /// The photo's frame in the canvas (bigger than the canvas while zoomed in).
+    let frame: CGRect
+    let area: CGSize
+    /// Off in the tools that use the drag themselves (crop, level tool, Fixes): it fades and lets the drag through,
+    /// so a handle or a point underneath can still be reached.
+    var movable = true
+    /// The spot of the photo (0…1) to bring to the middle of the canvas.
+    let move: (CGPoint) -> Void
+    @ViewBuilder let photo: () -> Photo
+
+    /// How far the press was from the outline's centre, so grabbing the outline doesn't make it jump.
+    @State private var grab: CGSize?
+
+    /// The long side follows the canvas, within limits (a phone's width gives about 96 pt).
+    private var size: CGSize {
+        let long = min(max(min(area.width, area.height) * 0.24, 84), 150)
+        return frame.width >= frame.height
+            ? CGSize(width: long, height: long * frame.height / frame.width)
+            : CGSize(width: long * frame.width / frame.height, height: long)
+    }
+
+    /// The part on screen, in the navigator's coordinates.
+    private var outline: CGRect {
+        let v = PreviewZoom.visible(frame, in: area)
+        return CGRect(x: (v.minX - frame.minX) / frame.width * size.width, y: (v.minY - frame.minY) / frame.height * size.height,
+                      width: v.width / frame.width * size.width, height: v.height / frame.height * size.height)
+    }
+
+    var body: some View {
+        if zoom.isZoomed, frame.width > 0, frame.height > 0 {
+            let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
+            let box = outline
+            photo()
+                .frame(width: size.width, height: size.height)
+                .overlay {
+                    Path { p in p.addRect(CGRect(origin: .zero, size: size)); p.addRect(box) }
+                        .fill(.black.opacity(0.5), style: FillStyle(eoFill: true))
+                    Path(box).stroke(.white, lineWidth: 1.25)
+                }
+                .clipShape(shape)
+                .overlay(shape.stroke(.white.opacity(0.3), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.35), radius: 6, y: 1)
+                .contentShape(shape)
+                .gesture(DragGesture(minimumDistance: 0).onChanged { g in
+                    let offset = grab ?? (box.contains(g.startLocation)
+                        ? CGSize(width: box.midX - g.startLocation.x, height: box.midY - g.startLocation.y) : .zero)
+                    grab = offset
+                    move(CGPoint(x: (g.location.x + offset.width) / size.width, y: (g.location.y + offset.height) / size.height))
+                }.onEnded { _ in grab = nil })
+                .allowsHitTesting(movable)
+                .opacity(movable ? 1 : 0.65)
+                .padding(10)
+                .transition(.opacity)
+                .accessibilityElement()
+                .accessibilityLabel("The part of the photo on screen")
         }
     }
 }

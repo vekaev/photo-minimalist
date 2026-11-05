@@ -108,7 +108,7 @@ struct HorizonLevelerApp: App {
                 .keyboardShortcut(.delete, modifiers: .command)
             }
             CommandGroup(after: .toolbar) {
-                // The preview's zoom (also pinch, ⌥-scroll, ⌥-double-click; ⌘= works like ⌘+). No ⌘1 for
+                // The preview's zoom (also pinch, ⌘/⌥-scroll, ⌥-double-click; ⌘= works like ⌘+). No ⌘1 for
                 // actual pixels: ⌘1…9 switch tabs.
                 Button("Zoom In") { library.requestZoom(.zoomIn) }
                     .keyboardShortcut("+")

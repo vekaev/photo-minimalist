@@ -58,7 +58,7 @@ struct FixesWorkspace: View {
             let aspect = image.map { CGFloat($0.width) / CGFloat($0.height) } ?? 1.5
             let w = min(area.width, area.height * aspect)
             let fit = CGSize(width: w, height: w / aspect)
-            // Zoomed in (pinch, ⌥-scroll, ⌘+), the frame is bigger than the canvas; two-finger scroll pans
+            // Zoomed in (pinch, ⌘/⌥-scroll, ⌘+), the frame is bigger than the canvas; two-finger scroll pans
             // (a plain drag still measures rows).
             let frame = zoom.frame(fit: fit, in: area)
             let visible = PreviewZoom.visible(frame, in: area)
@@ -92,6 +92,12 @@ struct FixesWorkspace: View {
             .background { CanvasEvents { e, p in zoom.handle(e, at: p) } }
             .onChange(of: [fit.width, fit.height, area.width, area.height], initial: true) { zoom.layout(fit: fit, area: area) }
             .overlay(alignment: .bottomTrailing) { ZoomPill(zoom: zoom) { withAnimation(.easeOut(duration: 0.18)) { zoom.reset() } } }
+            // Bottom left: the Before / After tags sit along the top. A plain drag measures rows here, so it lets drags through.
+            .overlay(alignment: .bottomLeading) {
+                ZoomNavigator(zoom: zoom, frame: frame, area: area, movable: false, move: { zoom.center(on: $0) }) {
+                    if let image { EditedImage(image: image) }
+                }
+            }
             .animation(.easeOut(duration: 0.2), value: zoom.isZoomed)
             .gesture(rowGesture(frame))
             .overlay(alignment: .top) {

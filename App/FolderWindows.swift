@@ -410,7 +410,8 @@ final class WindowRouter {
 
     /// A window's root appeared; the first one restores the folders from last time.
     func appeared(_ tabs: FolderTabs) {
-        if !all.contains(where: { $0 === tabs }) { windows.append(Weak(tabs)) }
+        let isNew = !all.contains(where: { $0 === tabs })
+        if isNew { windows.append(Weak(tabs)) }
         if !restored {
             restored = true
             // Once: the Overlay compare mode stacked tilted images and confused; start from Off.
@@ -421,6 +422,11 @@ final class WindowRouter {
             restore(into: tabs)
             cards.start(frontmost: { [weak self] in self?.frontLibrary })
             installKeyMonitor()
+        } else if isNew, all.count == 1, tabs.tabs.count == 1, tabs.current.folder == nil {
+            // Every window was closed (the app kept running) and one opened again from the Dock: come back
+            // with the tabs it had, not an empty start page. Saved when the last window closed; a window
+            // closed on the start page (no tabs saved) stays the start page.
+            restore(into: tabs, fallBackToLastFolder: false)
         }
         if let (card, name) = pendingCard {
             pendingCard = nil
@@ -680,14 +686,14 @@ final class WindowRouter {
 
     /// At launch: every folder that was open, each in its own tab of this window, the active one selected.
     /// Folders that are gone (an ejected card) are skipped silently.
-    private func restore(into tabs: FolderTabs) {
+    private func restore(into tabs: FolderTabs, fallBackToLastFolder: Bool = true) {
         let library = tabs.current
         let d = UserDefaults.standard
         let explicit = d.string(forKey: "openFolder") != nil   // `-openFolder <path>` for testing
         let reopen = d.object(forKey: "reopenLastFolder") as? Bool ?? true
         let paths = (d.stringArray(forKey: "openFolders") ?? []).filter { FileManager.default.fileExists(atPath: $0) }
         guard !explicit, reopen, !paths.isEmpty else {
-            library.restoreLastFolder()
+            if fallBackToLastFolder { library.restoreLastFolder() }
             return
         }
         let active = d.string(forKey: "activeFolder")

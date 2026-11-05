@@ -13,7 +13,11 @@ final class Library {
     var photos: [Photo] = []
     private var byID: [String: Photo] = [:]
 
-    var filter: Filter = .review
+    /// The tab (All · Tilted · Edited · ♥ or a collection), remembered per folder like the open photo, so
+    /// reopening the folder, a relaunch or a reopened window comes back to the same view.
+    var filter: Filter = .review {
+        didSet { if filter != oldValue, let folder, !isPreview { Self.rememberFilter(filter, in: folder) } }
+    }
     var selection: Set<String> = []
     /// Photo shown in the single-photo view; nil shows the grid.
     var openedID: String? {
@@ -337,7 +341,7 @@ final class Library {
         for p in photos where p.analyzed && p.analysisVersion < HorizonDetector.version { p.analyzed = false }
         analyzedCount = photos.filter(\.analyzed).count
         notice = nil
-        filter = .review
+        filter = Self.lastFilter(in: url) ?? .review
         if !autoLevel { clearAutomaticDecisions() }
         #if os(macOS)
         importFinderFavorites()
@@ -379,7 +383,7 @@ final class Library {
         byID = Dictionary(photos.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         analyzedCount = photos.filter(\.analyzed).count
         notice = nil
-        filter = .review
+        filter = Self.lastFilter(in: url) ?? .review
         Self.log("card: preview of \(url.lastPathComponent) from the snapshot, \(photos.count) photos")
         restoreLastPhoto()
     }
@@ -401,6 +405,18 @@ final class Library {
         guard all[folderKey(folder)] != id else { return }
         all[folderKey(folder)] = id
         UserDefaults.standard.set(all, forKey: lastPhotoKey)
+    }
+
+    private static let lastFilterKey = "lastFilterByFolder"
+
+    private static func rememberFilter(_ filter: Filter, in folder: URL) {
+        var all = UserDefaults.standard.dictionary(forKey: lastFilterKey) as? [String: String] ?? [:]
+        all[folderKey(folder)] = filter.rawValue
+        UserDefaults.standard.set(all, forKey: lastFilterKey)
+    }
+
+    private static func lastFilter(in folder: URL) -> Filter? {
+        (UserDefaults.standard.dictionary(forKey: lastFilterKey) as? [String: String])?[folderKey(folder)].flatMap(Filter.init)
     }
 
     private static func forgetLastPhoto(in folder: URL) {

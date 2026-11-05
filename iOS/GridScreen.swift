@@ -3,7 +3,12 @@ import SwiftUI
 struct GridScreen: View {
     @Environment(Library.self) private var library
     let zoom: Namespace.ID
-    @State private var tab: Filter = .review
+    /// The tab lives on the Library, so it's remembered per folder (a relaunch comes back to it).
+    private var tab: Filter {
+        get { library.filter }
+        nonmutating set { library.filter = newValue }
+    }
+    private var tabBinding: Binding<Filter> { Binding(get: { library.filter }, set: { library.filter = $0 }) }
     @State private var picking = false
     @State private var exporter = Exporter()
     @State private var confirmReplace = false
@@ -136,12 +141,12 @@ struct GridScreen: View {
     }
 
     private var menu: some View {
-        FolderMenu(tab: $tab, exporter: exporter, confirmReplace: $confirmReplace, picking: $picking)
+        FolderMenu(tab: tabBinding, exporter: exporter, confirmReplace: $confirmReplace, picking: $picking)
     }
 
     // MARK: Tabs: plain words, the current one in full ink
 
-    private var tabs: some View { FilterTabs(tab: $tab) }
+    private var tabs: some View { FilterTabs(tab: tabBinding) }
 
     /// Select mode's bottom bar: Favorite / Level / Delete / Done for the picked photos.
     private var selectBar: some View {
@@ -177,7 +182,6 @@ struct GridScreen: View {
     }
 
     private func open(_ p: Photo, in items: [Photo]) {
-        library.filter = tab
         library.navigation = items.map(\.id)
         library.openedID = p.id
     }

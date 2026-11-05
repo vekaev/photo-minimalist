@@ -94,7 +94,7 @@ struct FixesWorkspace: View {
             .overlay(alignment: .bottomTrailing) { ZoomPill(zoom: zoom) { withAnimation(.easeOut(duration: 0.18)) { zoom.reset() } } }
             // Bottom left: the Before / After tags sit along the top. A plain drag measures rows here, so it lets drags through.
             .overlay(alignment: .bottomLeading) {
-                ZoomNavigator(zoom: zoom, frame: frame, area: area, movable: false, move: { zoom.center(on: $0) }) {
+                ZoomNavigator(zoom: zoom, frame: frame, area: area, movable: false, edge: .bottom, move: { zoom.center(on: $0) }) {
                     if let image { EditedImage(image: image) }
                 }
             }

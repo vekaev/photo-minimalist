@@ -162,16 +162,19 @@ struct EditorView: View {
     private func topBar(_ p: Photo) -> some View {
         let i = (library.navigation.firstIndex(of: p.id) ?? 0) + 1
         let all = PhotoControl.parse(controlsRaw, on: .phone)
-        // Close, the counter and settings always stay; the chosen buttons get the rest, extras go into ⋯.
+        // Close, the counter and settings always stay; the chosen buttons get the rest. Tight on a phone: the buttons
+        // narrow from 44 to 32 pt (still 44 tall) so they all stay, and only then do extras go into ⋯.
         let counter = "\(i) / \(library.navigation.count)"
-        let counterWidth = ceil((counter as NSString).size(withAttributes: [.font: UIFont.preferredFont(forTextStyle: .footnote)]).width) + 4 + 18
-        let room = Double(barWidth) - 16 - 44 - 44 - Double(counterWidth) - 4
-        let shown = barWidth == 0 ? all.count : PhotoControl.fitting(all.map { _ in 44 }, in: room, spacing: 0, overflowWidth: 44)
+        let counterWidth = ceil((counter as NSString).size(withAttributes: [.font: UIFont.preferredFont(forTextStyle: .footnote)]).width) + 4 + 18 + 12
+        let free = Double(barWidth) - 16 - Double(counterWidth) - 4
+        let button = barWidth == 0 ? 44 : CGFloat(min(44, max(32, free / Double(all.count + 2))))
+        let shown = barWidth == 0 ? all.count : PhotoControl.fitting(all.map { _ in Double(button) }, in: free - 2 * Double(button),
+                                                                     spacing: 0, overflowWidth: Double(button))
         return HStack(spacing: 0) {
             if let pad {
-                iconButton("sidebar.left", pad.sidebarShown ? "Hide Sidebar" : "Show Sidebar") { pad.toggleSidebar() }
+                iconButton("sidebar.left", pad.sidebarShown ? "Hide Sidebar" : "Show Sidebar", width: button) { pad.toggleSidebar() }
             } else {
-                iconButton("chevron.down", "Close") { library.closePhoto() }
+                iconButton("chevron.down", "Close", width: button) { library.closePhoto() }
             }
             Spacer(minLength: 0)
             // The position doubles as the ⓘ button (no room for another icon): date, camera, exposure, sizes.
@@ -192,7 +195,7 @@ struct EditorView: View {
                     Image(systemName: symbol(c, p))
                         .font(.system(size: 17, weight: (c == .level && levelMode) || (c == .adjust && adjustMode) ? .bold : .medium))
                         .foregroundStyle(c == .favorite && p.favorite ? AnyShapeStyle(.red) : AnyShapeStyle(.tint))
-                        .frame(width: 44, height: 44).contentShape(Rectangle())
+                        .frame(width: button, height: 44).contentShape(Rectangle())
                 }
                 .hoverEffect(.highlight)
                 .disabled(!enabled(c, p))
@@ -208,13 +211,13 @@ struct EditorView: View {
                     }
                 } label: {
                     Image(systemName: "ellipsis").font(.system(size: 17, weight: .medium))
-                        .frame(width: 44, height: 44).contentShape(Rectangle())
+                        .frame(width: button, height: 44).contentShape(Rectangle())
                 }
                 .hoverEffect(.highlight)
                 .accessibilityLabel("More")
             }
             // Always here: the settings sheet is where the buttons above are chosen. Long-press: Move to Trash.
-            iconButton("slider.horizontal.3", "Settings") { library.showSettings = true }
+            iconButton("slider.horizontal.3", "Settings", width: button) { library.showSettings = true }
                 .contextMenu {
                     Button(role: .destructive) { library.requestDelete([p.id]) } label: { Label("Move to Trash", systemImage: "trash") }
                 }
@@ -225,6 +228,9 @@ struct EditorView: View {
                 }
         }
         .padding(.horizontal, 8)
+        // The width offered, never the buttons' own: a bar wider than the screen would widen the whole editor with it
+        // (and always measure as if everything fits).
+        .frame(minWidth: 0, maxWidth: .infinity)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { barWidth = $0 }
     }
 
@@ -282,10 +288,10 @@ struct EditorView: View {
         withAnimation(.easeOut(duration: 0.15)) { library.levelTool.toggle() }
     }
 
-    private func iconButton(_ name: String, _ label: String, action: @escaping () -> Void) -> some View {
+    private func iconButton(_ name: String, _ label: String, width: CGFloat = 44, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: name).font(.system(size: 17, weight: .medium))
-                .frame(width: 44, height: 44).contentShape(Rectangle())
+                .frame(width: width, height: 44).contentShape(Rectangle())
         }
         .hoverEffect(.highlight)
         .accessibilityLabel(label)

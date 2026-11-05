@@ -510,9 +510,12 @@ struct PhotoView: View {
         .allowsHitTesting(false)
     }
 
+    /// Top left, or bottom left when the level tool's loupes sit along the top.
+    private var navigatorEdge: VerticalEdge { levelMode && showGuide && showLoupes && guideY > 0.62 ? .bottom : .top }
+
     /// The whole photo, small, while zoomed in, showing the same picture as the canvas.
     private func navigator(frame: CGRect, area: CGSize, rotation: Double, crop: CGRect?) -> some View {
-        ZoomNavigator(zoom: zoom, frame: frame, area: area, movable: !levelMode && !cropMode,
+        ZoomNavigator(zoom: zoom, frame: frame, area: area, movable: !levelMode && !cropMode, edge: navigatorEdge,
                       move: { zoom.center(on: $0); focused = true }) {
             if let image {
                 EditedImage(image: image, rotation: rotation, crop: crop, fix: showOriginal ? nil : photo.bandFixSource, light: shownLight)
@@ -643,8 +646,7 @@ struct PhotoView: View {
             .overlay(alignment: .bottomTrailing) {
                 if interactive { ZoomPill(zoom: zoom) { withAnimation(.easeOut(duration: 0.18)) { zoom.reset() } } }
             }
-            // Top left, or bottom left when the level tool's loupes sit along the top.
-            .overlay(alignment: levelMode && showGuide && showLoupes && guideY > 0.62 ? .bottomLeading : .topLeading) {
+            .overlay(alignment: navigatorEdge == .top ? .topLeading : .bottomLeading) {
                 if interactive { navigator(frame: frame, area: area, rotation: rotation, crop: crop) }
             }
             .animation(.easeOut(duration: 0.2), value: zoom.isZoomed)

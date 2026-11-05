@@ -150,6 +150,8 @@ struct ZoomNavigator<Photo: View>: View {
     /// Off in the tools that use the drag themselves (crop, level tool, Fixes): it fades and lets the drag through,
     /// so a handle or a point underneath can still be reached.
     var movable = true
+    /// Which corner on the left, top or bottom. Put the view in the canvas's overlay with the matching alignment.
+    var edge: VerticalEdge = .top
     /// The spot of the photo (0…1) to bring to the middle of the canvas.
     let move: (CGPoint) -> Void
     @ViewBuilder let photo: () -> Photo
@@ -176,6 +178,7 @@ struct ZoomNavigator<Photo: View>: View {
         if zoom.isZoomed, frame.width > 0, frame.height > 0 {
             let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
             let box = outline
+            let shown = PreviewZoom.visible(frame, in: area)
             photo()
                 .frame(width: size.width, height: size.height)
                 .overlay {
@@ -196,6 +199,9 @@ struct ZoomNavigator<Photo: View>: View {
                 .allowsHitTesting(movable)
                 .opacity(movable ? 1 : 0.65)
                 .padding(10)
+                // Over the photo, not the empty canvas around it (at a low zoom it may not fill the canvas yet).
+                .padding(.leading, shown.minX)
+                .padding(edge == .top ? .top : .bottom, edge == .top ? shown.minY : area.height - shown.maxY)
                 .transition(.opacity)
                 .accessibilityElement()
                 .accessibilityLabel("The part of the photo on screen")

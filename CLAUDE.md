@@ -171,6 +171,7 @@ step (a batch is one step), each logged as "Undo: …" / "Redo: …" in the Hist
 
 ## Performance notes (measured on a SanDisk Extreme PRO in the MacBook's built-in reader)
 
+- App feels slow? Measure first: `profile-app "Photo Minimalist"` samples the running Mac app (add `--reopen` to catch a window opening) and prints the heaviest frames; `profile-app --report` shows the last day of CPU and memory.
 - Card reads ~88 MB/s; Fuji JPEGs ~21 MB, RAFs ~83 MB. Anything that reads whole files is slow.
 - Per photo: full JPEG decode 264–404 ms; RAF embedded preview 111–143 ms; JPEG embedded thumbnail 4 ms.
 - Over 5° is never "likely": those were portraits / deliberate angles on the owner's card.

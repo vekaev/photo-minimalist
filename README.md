@@ -209,7 +209,7 @@ After that it updates itself, and keeps the permissions you gave it (Photos, mem
 
 **Releasing an update** (Mac, [Sparkle](https://sparkle-project.org)): `scripts/release.sh 0.3.0` bumps the version, builds the DMG (its window: `Support/DMG`, drawn by `scripts/make-dmg-background.swift`, laid out by dmgbuild) and signs it, writes `appcast.xml`, commits, tags, pushes and creates the GitHub release; installed copies pick it up from there. The signing key lives in your login keychain (back it up, see the script's header).
 
-iPhone: `xcodegen generate`, open `HorizonLeveler.xcodeproj`, pick the **HorizonLeveler-iOS** scheme, choose your team under Signing, and run it on your phone (or `scripts/run-ios-sim.sh` for the simulator).
+iPhone: sign in to Xcode with your Apple Account (Settings ▸ Accounts; free is fine), connect or pair your iPhone, and run `scripts/install-iphone.sh`. With a free account the app stops opening after 7 days; `scripts/install-iphone.sh --schedule` lets your Mac reinstall it in the background before that, whenever the iPhone is on the same Wi-Fi. The first time, turn on Developer Mode on the iPhone and trust your account under Settings ▸ General ▸ VPN & Device Management. For the simulator: `scripts/run-ios-sim.sh`.
 
 New contributors and AI agents: start with [`CLAUDE.md`](CLAUDE.md). It holds the rules (every change ships on Mac **and** iPhone), the feature parity table and the performance notes.
 
